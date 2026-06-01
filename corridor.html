@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Share Price Corridor — Valuation Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;500;600;700&family=Sora:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>/*__RUGPULL_INJECT__*/</script>
+<style>
+:root{
+  --bg-0:#0d1426; --bg-1:#131c33; --bg-2:#18223d;
+  --card:rgba(30,42,72,.55); --card-2:rgba(38,52,88,.45);
+  --line:rgba(120,140,190,.16); --line-2:rgba(120,140,190,.28);
+  --txt:#e9eefc; --txt-2:#9aa8cc; --txt-3:#6b789c;
+  --blue:#5b9cf6; --teal:#46d6c8; --green:#42c98a; --green-2:#6fe0a8;
+  --orange:#fb8b3c; --orange-2:#fcad6e; --purple:#8b7bf0;
+  --badge-bg:rgba(45,140,90,.22); --badge-txt:#5fe0a0;
+  --red:#f06464;
+  --r:18px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:'Sora',sans-serif;color:var(--txt);
+  background:
+    radial-gradient(1200px 700px at 12% -5%, rgba(70,90,160,.30), transparent 55%),
+    radial-gradient(900px 600px at 100% 0%, rgba(40,70,130,.22), transparent 50%),
+    linear-gradient(160deg,var(--bg-1),var(--bg-0) 70%);
+  background-attachment:fixed;min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+  font-size:14px;
+}
+.num{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums}
+.app{display:grid;grid-template-columns:330px 1fr;gap:18px;padding:18px;max-width:1920px;margin:0 auto}
+@media(max-width:1100px){.app{grid-template-columns:1fr}}
+
+/* ---------- cards ---------- */
+.card{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  box-shadow:0 1px 0 rgba(255,255,255,.04) inset, 0 18px 40px -24px rgba(0,0,0,.7);
+}
+.pad{padding:22px}
+
+/* ---------- sidebar ---------- */
+.side{display:flex;flex-direction:column;gap:18px;position:sticky;top:18px;align-self:start}
+.brand h1{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:25px;line-height:1.02;letter-spacing:-.5px}
+.brand .tkr{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:26px;letter-spacing:.5px;margin-top:2px}
+.brand .tlogo{display:flex;align-items:center;justify-content:space-between}
+.brand .desc{color:var(--txt-2);font-size:12px;line-height:1.55;margin-top:14px;font-weight:300}
+.rule{height:1px;background:var(--line);margin:16px 0}
+.sect-h{display:flex;align-items:center;gap:8px;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;color:var(--txt-2);font-weight:600;margin-bottom:6px}
+
+.ticker-bar{display:flex;gap:8px;align-items:center;margin-bottom:4px}
+select,input,textarea,button{font-family:inherit;color:var(--txt)}
+.tsel{
+  flex:1;background:var(--bg-2);border:1px solid var(--line-2);border-radius:10px;
+  padding:9px 11px;font-size:14px;font-weight:600;appearance:none;cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239aa8cc' d='M3 4.5L6 7.5 9 4.5z'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center;
+}
+.iconbtn{background:var(--bg-2);border:1px solid var(--line-2);border-radius:10px;width:38px;height:38px;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--txt-2);font-size:18px;transition:.15s}
+.iconbtn:hover{color:var(--txt);border-color:var(--blue);background:rgba(91,156,246,.12)}
+
+/* ---------- sliders ---------- */
+.ctrl{margin:18px 0}
+.ctrl-lbl{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt-2);font-weight:500;margin-bottom:7px}
+.ctrl-val{font-family:'IBM Plex Mono',monospace;font-size:21px;font-weight:600;color:var(--blue);line-height:1}
+.ctrl-val small{font-size:11px;color:var(--txt-3);font-weight:400;margin-left:8px;font-family:'Sora'}
+input[type=range]{-webkit-appearance:none;width:100%;height:4px;border-radius:4px;
+  background:linear-gradient(90deg,var(--purple) var(--p,30%),rgba(120,140,190,.25) var(--p,30%));
+  margin-top:10px;cursor:pointer}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:17px;height:17px;border-radius:50%;
+  background:#fff;border:3px solid var(--purple);box-shadow:0 2px 6px rgba(0,0,0,.5);cursor:pointer}
+input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid var(--purple);cursor:pointer}
+.range-ends{display:flex;justify-content:space-between;font-size:10px;color:var(--txt-3);margin-top:6px;font-family:'IBM Plex Mono'}
+.daterow{display:flex;gap:8px;margin-top:10px}
+.daterow input{flex:1;background:var(--bg-2);border:1px solid var(--line-2);border-radius:9px;padding:8px;font-size:12px;font-family:'IBM Plex Mono'}
+input[type=date]{color-scheme:dark}
+
+.foot{display:flex;align-items:center;gap:10px;margin-top:18px;color:var(--txt-3);font-size:11px}
+.logo-chip{font-family:'Bricolage Grotesque';font-weight:800;font-size:13px;background:linear-gradient(90deg,#caa14a,#f4d98a);-webkit-background-clip:text;background-clip:text;color:transparent;border:1px solid rgba(200,160,80,.4);padding:5px 10px;border-radius:7px}
+
+/* ---------- main grid ---------- */
+.main{display:flex;flex-direction:column;gap:18px;min-width:0}
+.toprow{display:grid;grid-template-columns:1fr 1.25fr;gap:18px}
+@media(max-width:820px){.toprow{grid-template-columns:1fr}}
+.card-h{font-family:'Bricolage Grotesque';font-weight:600;font-size:18px;margin-bottom:2px}
+.card-sub{color:var(--txt-3);font-size:11px;font-style:italic;margin-bottom:18px}
+
+.kv{display:flex;align-items:center;gap:14px;padding:11px 0;border-top:1px solid var(--line)}
+.kv:first-of-type{border-top:none}
+.kv .ic{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px;background:rgba(91,156,246,.12);flex-shrink:0}
+.kv .big{font-family:'IBM Plex Mono';font-size:26px;font-weight:600;color:var(--blue);line-height:1}
+.kv .lbl{font-size:11px;color:var(--txt-2);margin-top:3px}
+
+.target-wrap{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.target{font-family:'IBM Plex Mono';font-weight:700;font-size:68px;line-height:.85;letter-spacing:-2px}
+.badge{display:inline-flex;align-items:center;gap:4px;background:var(--badge-bg);color:var(--badge-txt);
+  font-family:'IBM Plex Mono';font-weight:600;font-size:14px;padding:5px 11px;border-radius:8px}
+.target-lbl{font-size:12px;color:var(--txt-2);margin-top:8px}
+.bands-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:22px}
+@media(max-width:560px){.bands-row{grid-template-columns:repeat(2,1fr)}}
+.band .v{font-family:'IBM Plex Mono';font-size:24px;font-weight:600}
+.band .n{font-size:10px;color:var(--txt-3);margin:3px 0 6px}
+.band .badge{font-size:11px;padding:3px 8px}
+
+/* ---------- chart ---------- */
+.chart-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:6px}
+.viewtoggle{display:flex;gap:18px;font-size:13px;color:var(--txt-2)}
+.viewtoggle label{display:flex;align-items:center;gap:7px;cursor:pointer}
+.viewtoggle input{accent-color:var(--blue);width:15px;height:15px}
+.legend{display:flex;gap:18px;flex-wrap:wrap;justify-content:center;margin:14px 0 4px;font-size:12px;color:var(--txt-2)}
+.legend span{display:inline-flex;align-items:center;gap:7px}
+.legend i{width:22px;height:3px;border-radius:2px;display:inline-block}
+.chart-box{position:relative;height:520px}
+@media(max-width:820px){.chart-box{height:380px}}
+
+/* ---------- drawer ---------- */
+.scrim{position:fixed;inset:0;background:rgba(5,9,20,.66);backdrop-filter:blur(3px);z-index:40;opacity:0;pointer-events:none;transition:.2s}
+.scrim.open{opacity:1;pointer-events:auto}
+.drawer{position:fixed;top:0;right:0;height:100%;width:min(560px,100%);background:linear-gradient(180deg,var(--bg-1),var(--bg-0));
+  border-left:1px solid var(--line-2);z-index:41;transform:translateX(100%);transition:.28s cubic-bezier(.5,.1,.2,1);
+  overflow-y:auto;box-shadow:-30px 0 70px -30px rgba(0,0,0,.8)}
+.drawer.open{transform:translateX(0)}
+.drawer .dpad{padding:26px}
+.drawer h2{font-family:'Bricolage Grotesque';font-weight:700;font-size:22px;margin-bottom:4px}
+.drawer .dsub{color:var(--txt-3);font-size:12px;margin-bottom:20px}
+.field{margin-bottom:16px}
+.field label{display:block;font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--txt-2);margin-bottom:6px;font-weight:500}
+.field .hint{font-size:11px;color:var(--txt-3);margin-top:5px;font-weight:300;font-style:italic}
+.field input[type=text],.field input[type=number],.field input[type=password],.field input[type=date],.field textarea,.field select{
+  width:100%;background:var(--bg-2);border:1px solid var(--line-2);border-radius:10px;padding:10px 12px;font-size:13px;font-family:'IBM Plex Mono'}
+.field textarea{min-height:120px;resize:vertical;line-height:1.5;white-space:pre}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.btn{border:none;border-radius:10px;padding:11px 16px;font-size:13px;font-weight:600;cursor:pointer;transition:.15s}
+.btn-primary{background:linear-gradient(90deg,var(--blue),#4a82e0);color:#fff}
+.btn-primary:hover{filter:brightness(1.1)}
+.btn-ghost{background:var(--bg-2);border:1px solid var(--line-2);color:var(--txt-2)}
+.btn-ghost:hover{color:var(--txt);border-color:var(--blue)}
+.btn-danger{background:rgba(240,100,100,.14);border:1px solid rgba(240,100,100,.4);color:var(--red)}
+.btn-danger:hover{background:rgba(240,100,100,.24)}
+.btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+.dsection{border-top:1px solid var(--line);margin-top:22px;padding-top:20px}
+.dsection h3{font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--txt-2);margin-bottom:4px}
+.dsection .dnote{font-size:11px;color:var(--txt-3);margin-bottom:14px;line-height:1.5}
+.msg{font-size:12px;padding:9px 12px;border-radius:9px;margin-top:10px;display:none}
+.msg.ok{display:block;background:rgba(66,201,138,.14);color:var(--green-2);border:1px solid rgba(66,201,138,.3)}
+.msg.err{display:block;background:rgba(240,100,100,.14);color:var(--red);border:1px solid rgba(240,100,100,.3)}
+.swatch{width:34px;height:38px;border:1px solid var(--line-2);border-radius:10px;padding:0;background:none;cursor:pointer}
+.tip{position:relative;cursor:help;color:var(--txt-3);font-size:11px;border:1px solid var(--line-2);border-radius:50%;width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center}
+.tip:hover::after{content:attr(data-tip);position:absolute;bottom:130%;left:50%;transform:translateX(-50%);
+  background:#0a1124;border:1px solid var(--line-2);padding:8px 11px;border-radius:8px;width:210px;font-size:11px;
+  color:var(--txt-2);z-index:5;line-height:1.45;font-weight:300;letter-spacing:0;text-transform:none}
+.warnote{font-size:11px;color:var(--orange-2);background:rgba(251,139,60,.1);border:1px solid rgba(251,139,60,.3);
+  border-radius:9px;padding:10px 12px;margin-top:10px;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="side">
+    <div class="card pad brand">
+      <div class="tlogo">
+        <h1>SHARE&nbsp;PRICE<br>CORRIDOR</h1>
+        <div style="font-family:'Bricolage Grotesque';font-weight:800;font-size:13px;color:var(--txt-3)">VS</div>
+      </div>
+      <div class="tkr" id="brandTicker" style="color:var(--blue)">TESLA</div>
+      <div class="rule"></div>
+      <div class="ticker-bar">
+        <select class="tsel" id="tickerSelect"></select>
+        <button class="iconbtn" id="editBtn" title="Edit / add data">✎</button>
+        <button class="iconbtn" id="addBtn" title="New ticker">+</button>
+      </div>
+      <div class="desc" id="brandDesc">Implied share-price corridor from reported &amp; projected forward earnings.</div>
+
+      <div class="rule"></div>
+      <div class="sect-h">⚙ Parameters</div>
+
+      <div class="ctrl">
+        <div class="ctrl-lbl">Sentiment <span class="tip" data-tip="Rolling look-back window (calendar days) used to compute the median forward P/E and its standard deviation.">i</span></div>
+        <div class="ctrl-val"><span id="sentVal">90</span><small id="sentRange"></small></div>
+        <input type="range" id="sent" min="30" max="720" value="90" step="1">
+        <div class="range-ends"><span>30</span><span>720</span></div>
+      </div>
+
+      <div class="ctrl">
+        <div class="ctrl-lbl">Nbr of Quarters <span class="tip" data-tip="How many historical quarters of the corridor are plotted (chart density on the left side).">i</span></div>
+        <div class="ctrl-val"><span id="qtrVal">12</span></div>
+        <input type="range" id="qtr" min="1" max="12" value="12" step="1">
+        <div class="range-ends"><span>1</span><span>12</span></div>
+      </div>
+
+      <div class="ctrl">
+        <div class="ctrl-lbl">Earnings Change <span class="tip" data-tip="Scales every PROJECTED (forward) EPS up or down uniformly. Bull/bear scenario knob — leaves the P/E multiple untouched.">i</span></div>
+        <div class="ctrl-val" id="ecVal">+0%</div>
+        <input type="range" id="ec" min="-100" max="100" value="0" step="1">
+        <div class="range-ends"><span>-100%</span><span>+100%</span></div>
+      </div>
+
+      <div class="ctrl">
+        <div class="ctrl-lbl">Date Range</div>
+        <div class="ctrl-val" style="font-size:13px" id="drLabel">—</div>
+        <div class="daterow">
+          <input type="date" id="dStart">
+          <input type="date" id="dEnd">
+        </div>
+      </div>
+
+      <div class="foot">
+        <span class="logo-chip">Valuation Studio</span>
+        <span style="margin-left:auto">v1.0</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main class="main">
+    <div class="toprow">
+      <!-- key valuation params -->
+      <div class="card pad">
+        <div class="card-h">Key Valuation Parameters</div>
+        <div class="card-sub">Based on set parameters (except for share price)</div>
+        <div class="kv">
+          <div class="ic">$</div>
+          <div><div class="big" id="kpPrice">$436</div><div class="lbl" id="kpPriceLbl">Share price (as-of date)</div></div>
+        </div>
+        <div class="kv">
+          <div class="ic">📊</div>
+          <div><div class="big" id="kpPE">289.2x</div><div class="lbl">Median 1-Yr Forward P/E (selected window)</div></div>
+        </div>
+        <div class="kv">
+          <div class="ic">📈</div>
+          <div><div class="big" id="kpSd">21.3x</div><div class="lbl">Forward multiple standard deviation (σ)</div></div>
+        </div>
+      </div>
+
+      <!-- NTM projection -->
+      <div class="card pad">
+        <div class="card-h">Next 12 Months (NTM) Share-Price Projection</div>
+        <div class="card-sub">Based on projected earnings &amp; the derived forward multiple</div>
+        <div class="target-wrap">
+          <div>
+            <div class="target" id="targetVal">$917</div>
+            <div class="target-lbl">Target sales price (12-mo)</div>
+          </div>
+          <div class="badge" id="targetBadge">▲ 110%</div>
+        </div>
+        <div class="bands-row">
+          <div class="band"><div class="v" style="color:var(--orange)" id="b_h15">$1,018</div><div class="n">SP high (1.5σ)</div><div class="badge" id="bb_h15">▲134%</div></div>
+          <div class="band"><div class="v" style="color:var(--green)" id="b_h10">$984</div><div class="n">SP high (1.0σ)</div><div class="badge" id="bb_h10">▲126%</div></div>
+          <div class="band"><div class="v" style="color:var(--green)" id="b_l10">$849</div><div class="n">SP low (1.0σ)</div><div class="badge" id="bb_l10">▲95%</div></div>
+          <div class="band"><div class="v" style="color:var(--orange)" id="b_l15">$815</div><div class="n">SP low (1.5σ)</div><div class="badge" id="bb_l15">▲87%</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- chart -->
+    <div class="card pad">
+      <div class="chart-head">
+        <div>
+          <div class="card-h" id="chartTitle">Implied Share-Price Corridor</div>
+          <div class="card-sub">Reported &amp; projected NTM EPS × implied forward multiple defined by Sentiment window</div>
+        </div>
+        <div class="viewtoggle">
+          <label><input type="radio" name="view" value="corridor" checked> Share-Price Corridor</label>
+          <label><input type="radio" name="view" value="pe"> Price-to-Earnings Ratio</label>
+        </div>
+      </div>
+      <div class="legend" id="legend"></div>
+      <div class="chart-box"><canvas id="chart"></canvas></div>
+    </div>
+  </main>
+</div>
+
+<!-- ============ DRAWER (data editor) ============ -->
+<div class="scrim" id="scrim"></div>
+<div class="drawer" id="drawer">
+  <div class="dpad">
+    <h2 id="drawerTitle">Edit ticker</h2>
+    <div class="dsub">All values stay on your machine. Nothing is sent anywhere unless you use the FMP fetch.</div>
+
+    <div class="grid3">
+      <div class="field"><label>Symbol</label><input type="text" id="fSym" placeholder="TSLA"></div>
+      <div class="field" style="grid-column:span 1"><label>Name</label><input type="text" id="fName" placeholder="Tesla"></div>
+      <div class="field"><label>Color</label><input type="color" id="fColor" class="swatch" value="#5b9cf6"></div>
+    </div>
+    <div class="grid2">
+      <div class="field"><label>As-of date</label><input type="date" id="fAsOf"></div>
+      <div class="field"><label>Share price (blank = last price)</label><input type="number" id="fPrice" step="0.01" placeholder="436"></div>
+    </div>
+
+    <div class="field">
+      <label>Quarterly EPS &nbsp;<span class="tip" data-tip="One row per quarter. report date = the earnings-release date (drives when NTM rolls forward). projected = 1 for forward estimates, 0 for reported actuals.">i</span></label>
+      <textarea id="fQtrs" spellcheck="false"></textarea>
+      <div class="hint">CSV: label, reportDate(YYYY-MM-DD), eps, projected(0/1) — one quarter per line. Paste straight from a spreadsheet.</div>
+    </div>
+
+    <div class="field">
+      <label>Price history</label>
+      <textarea id="fPrices" spellcheck="false" style="min-height:90px"></textarea>
+      <div class="hint">CSV: date(YYYY-MM-DD), close — daily or weekly. Only the last "Sentiment" days drive the multiple; the rest just draws the price line.</div>
+    </div>
+
+    <div class="field">
+      <label>Fallback annual growth % (auto-extends projections)</label>
+      <input type="number" id="fGrowth" step="1" placeholder="optional, e.g. 25">
+      <div class="hint">Used only if you have fewer than 4 forward quarters — extends EPS via EPS×(1+g/4)ⁿ so NTM can always be computed.</div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" id="saveBtn">Save ticker</button>
+      <button class="btn btn-ghost" id="cancelBtn">Cancel</button>
+      <button class="btn btn-danger" id="deleteBtn" style="margin-left:auto">Delete</button>
+    </div>
+    <div class="msg" id="editMsg"></div>
+
+    <!-- FMP -->
+    <div class="dsection">
+      <h3>Auto-fill from Financial Modeling Prep (optional)</h3>
+      <div class="dnote">Pulls daily prices, reported EPS, and forward analyst EPS estimates, then fills the boxes above for you to review before saving.</div>
+      <div class="grid2">
+        <div class="field" style="margin-bottom:10px"><label>FMP API key</label><input type="password" id="fmpKey" placeholder="paste key"></div>
+        <div class="field" style="margin-bottom:10px"><label>From year</label><input type="number" id="fmpFrom" value="2022"></div>
+      </div>
+      <button class="btn btn-ghost" id="fmpBtn">⤓ Fetch from FMP</button>
+      <div class="msg" id="fmpMsg"></div>
+      <div class="warnote">If the browser blocks the request (CORS), host this file (e.g. GitHub Pages) or route through a tiny proxy. See the companion guide for details.</div>
+    </div>
+
+    <!-- import/export -->
+    <div class="dsection">
+      <h3>Backup / restore (all tickers)</h3>
+      <div class="dnote">Save your whole dataset to a JSON file, or load one back in.</div>
+      <div class="btn-row">
+        <button class="btn btn-ghost" id="exportBtn">⤓ Export JSON</button>
+        <button class="btn btn-ghost" id="importBtn">⤒ Import JSON</button>
+        <input type="file" id="importFile" accept="application/json" hidden>
+      </div>
+    </div>
+
+    <!-- cloud sync -->
+    <div class="dsection">
+      <h3>Cloud sync — Google Apps Script</h3>
+      <div class="dnote">Store every ticker's data in a Google Sheet through an Apps Script web app, so the same numbers feed the model on any device — and you can edit EPS/prices right in the spreadsheet. The companion guide deploys the script in ~3 minutes.</div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Web app URL (must end in /exec)</label>
+        <input type="text" id="cloudUrl" placeholder="https://script.google.com/macros/s/…/exec">
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" id="cloudSaveBtn">⤴ Save all to cloud</button>
+        <button class="btn btn-ghost" id="cloudLoadBtn">⤵ Load from cloud</button>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:13px;font-size:12px;color:var(--txt-2);font-weight:400;cursor:pointer">
+        <input type="checkbox" id="cloudAuto" style="width:15px;height:15px;accent-color:var(--blue)"> Auto-load from cloud when the tool opens
+      </label>
+      <div class="msg" id="cloudMsg"></div>
+      <div class="warnote">Like the FMP fetch, cloud sync needs the page served over http(s) — it won't work from a <code>file://</code> page. Deploy the script with access set to <b>Anyone</b>.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =========================================================================
+   SHARE PRICE CORRIDOR — Valuation Studio
+   Single file. No build step, no backend. Optional FMP auto-fill.
+   ========================================================================= */
+
+/* ---------- tiny helpers ---------- */
+const $ = s => document.querySelector(s);
+const DAY = 86400000;
+const toMs = s => { const [y,m,d] = s.split('-').map(Number); return Date.UTC(y, m-1, d); };
+const fromMs = ms => new Date(ms).toISOString().slice(0,10);
+const median = a => { if(!a.length) return null; const s=[...a].sort((x,y)=>x-y), n=s.length; return n%2 ? s[(n-1)/2] : (s[n/2-1]+s[n/2])/2; };
+const stdev = a => { const n=a.length; if(n<2) return 0; const m=a.reduce((p,c)=>p+c,0)/n; return Math.sqrt(a.reduce((p,c)=>p+(c-m)**2,0)/(n-1)); };
+const money = v => v==null ? '—' : '$'+Math.round(v).toLocaleString('en-US');
+const pct = v => (v>=0?'▲ ':'▼ ')+Math.round(v*100)+'%';
+
+/* =========================================================================
+   VALUATION ENGINE  (pure functions — identical math to the methodology doc)
+   ========================================================================= */
+const Engine = {
+  // NTM EPS at a date = sum of the next 4 quarters whose report date is after `dateMs`.
+  // Projected quarters are scaled by the earnings-change factor (ec, e.g. +0.10 = +10%).
+  ntmEps(quarters, dateMs, ec){
+    const fwd = quarters
+      .filter(q => toMs(q.reportDate) > dateMs)
+      .sort((a,b) => toMs(a.reportDate) - toMs(b.reportDate))
+      .slice(0,4);
+    if (fwd.length < 4) return null;
+    return fwd.reduce((s,q) => s + (q.projected ? q.eps*(1+ec) : q.eps), 0);
+  },
+
+  // implied forward P/E at every price observation
+  impliedSeries(prices, quarters, ec){
+    const out = [];
+    for (const p of prices){
+      const ntm = this.ntmEps(quarters, toMs(p.date), ec);
+      if (ntm && ntm > 0) out.push({ ms: toMs(p.date), price: p.close, ntm, pe: p.close/ntm });
+    }
+    return out.sort((a,b)=>a.ms-b.ms);
+  },
+
+  // median & σ of the implied P/E inside the sentiment window ending at as-of date
+  windowStats(impSeries, asOfMs, sentimentDays){
+    const lo = asOfMs - sentimentDays*DAY;
+    const inWin = impSeries.filter(x => x.ms >= lo && x.ms <= asOfMs).map(x => x.pe);
+    return { med: median(inWin), sd: stdev(inWin), n: inWin.length, lo, hi: asOfMs };
+  },
+
+  // corridor band values across an arbitrary grid of dates
+  corridor(quarters, gridMs, med, sd, ec){
+    return gridMs.map(ms => {
+      const ntm = this.ntmEps(quarters, ms, ec);
+      if (!ntm) return { ms, median:null,h10:null,h15:null,l10:null,l15:null };
+      return { ms, ntm,
+        median: ntm*med,
+        h10: ntm*(med+sd), h15: ntm*(med+1.5*sd),
+        l10: ntm*(med-sd), l15: ntm*(med-1.5*sd) };
+    });
+  },
+
+  // 12-month target = NTM EPS one year out × median multiple
+  target(quarters, asOfMs, med, ec){
+    const n12 = this.ntmEps(quarters, asOfMs + 365*DAY, ec);
+    return n12 ? { ntm12:n12, median:n12*med } : null;
+  },
+
+  // auto-extend projections from the last quarter if user supplied < 4 forward quarters
+  autoExtend(quarters, asOfMs, growthPct){
+    if (!growthPct) return quarters;
+    const fwdCount = quarters.filter(q => toMs(q.reportDate) > asOfMs + 365*DAY).length;
+    if (fwdCount >= 4) return quarters;               // already enough to build NTM(+12mo)
+    const sorted = [...quarters].sort((a,b)=>toMs(a.reportDate)-toMs(b.reportDate));
+    let last = sorted[sorted.length-1];
+    const g = growthPct/100, out = [...quarters];
+    let baseEps = last.eps, baseMs = toMs(last.reportDate), yr = +last.label.slice(-4), qn = +last.label[1];
+    for (let i=1;i<=8;i++){
+      qn++; if(qn>4){qn=1;yr++;}
+      baseEps = baseEps*(1+g/4);
+      const ms = baseMs + 91*DAY*i;
+      out.push({ label:`Q${qn} ${yr}`, reportDate:fromMs(ms), eps:+baseEps.toFixed(3), projected:true });
+    }
+    return out;
+  }
+};
+
+/* =========================================================================
+   STATE  (in-memory; auto-persists to localStorage when run as a real file)
+   ========================================================================= */
+let STORE_OK = true;
+const KEY = 'corridor.dataset.v1';
+
+function loadState(){
+  try { const raw = localStorage.getItem(KEY); if(raw) return JSON.parse(raw); }
+  catch(e){ STORE_OK = false; }            // artifact sandbox blocks storage — fall back to memory
+  return null;
+}
+function saveState(){
+  try { localStorage.setItem(KEY, JSON.stringify(state)); }
+  catch(e){ STORE_OK = false; }            // silently no-op in the sandbox
+}
+
+const SEED = {
+  activeTicker:'TSLA',
+  cloudUrl:'https://script.google.com/macros/s/AKfycbzbGKyBiLmWS7736GDhYeoKt6QHJIFKbywKza83N7AcfoeE4-cSYV4sNvydwuvK4LGWRw/exec',
+  cloudAuto:false,
+  params:{ sentimentDays:90, numQuarters:12, earningsChange:0, dStart:'2022-04-21', dEnd:'2027-12-31', view:'corridor' },
+  tickers:{
+    TSLA:{
+      symbol:'TSLA', name:'TESLA', color:'#5b9cf6', asOf:'2026-05-29', price:436, growth:null,
+      desc:'Implied share-price corridor from reported & projected forward earnings. Updated for the quarter ending Mar 31, 2026 (reported Apr 22, 2026). Sample data — replace with your own.',
+      quarters:[
+        ['Q1 2022','2022-04-20',0.95,0],['Q2 2022','2022-07-20',0.85,0],['Q3 2022','2022-10-19',0.95,0],['Q4 2022','2023-01-25',1.07,0],
+        ['Q1 2023','2023-04-19',0.85,0],['Q2 2023','2023-07-19',0.91,0],['Q3 2023','2023-10-18',0.66,0],['Q4 2023','2024-01-24',0.71,0],
+        ['Q1 2024','2024-04-23',0.45,0],['Q2 2024','2024-07-23',0.52,0],['Q3 2024','2024-10-23',0.72,0],['Q4 2024','2025-01-29',0.73,0],
+        ['Q1 2025','2025-04-22',0.27,0],['Q2 2025','2025-07-23',0.40,0],['Q3 2025','2025-10-22',0.50,0],['Q4 2025','2026-01-28',0.55,0],
+        ['Q1 2026','2026-04-22',0.40,0],
+        ['Q2 2026','2026-07-22',0.30,1],['Q3 2026','2026-10-21',0.36,1],['Q4 2026','2027-01-27',0.42,1],['Q1 2027','2027-04-21',0.42,1],
+        ['Q2 2027','2027-07-21',0.60,1],['Q3 2027','2027-10-20',0.75,1],['Q4 2027','2028-01-26',0.90,1],['Q1 2028','2028-04-19',0.92,1],
+        ['Q2 2028','2028-07-19',1.10,1],['Q3 2028','2028-10-18',1.30,1],['Q4 2028','2029-01-24',1.50,1]
+      ].map(([label,reportDate,eps,projected])=>({label,reportDate,eps,projected:!!projected})),
+      prices:[] // filled below
+    }
+  }
+};
+// monthly history + weekly window (sample TSLA-like path)
+SEED.tickers.TSLA.prices = [
+ ['2022-04-21',295],['2022-05-20',245],['2022-06-20',230],['2022-07-20',240],['2022-08-19',295],['2022-09-20',275],
+ ['2022-10-20',220],['2022-11-18',180],['2022-12-20',140],['2023-01-20',130],['2023-02-17',200],['2023-03-17',180],
+ ['2023-04-21',165],['2023-05-19',180],['2023-06-16',260],['2023-07-21',260],['2023-08-18',215],['2023-09-15',275],
+ ['2023-10-20',210],['2023-11-17',234],['2023-12-15',253],['2024-01-19',212],['2024-02-16',200],['2024-03-15',163],
+ ['2024-04-19',147],['2024-05-17',178],['2024-06-21',183],['2024-07-19',220],['2024-08-16',216],['2024-09-20',238],
+ ['2024-10-18',220],['2024-11-15',320],['2024-12-13',436],['2024-12-31',403],['2025-01-17',426],['2025-02-14',355],
+ ['2025-03-14',250],['2025-04-17',241],['2025-05-16',350],['2025-06-20',322],['2025-07-18',330],['2025-08-15',335],
+ ['2025-09-19',426],['2025-10-17',440],['2025-11-21',400],['2025-12-19',430],['2026-01-23',412],['2026-02-06',380],
+ ['2026-02-13',360],['2026-02-20',395],['2026-02-27',410],
+ ['2026-03-06',405],['2026-03-13',418],['2026-03-20',392],['2026-03-27',434],['2026-04-03',455],['2026-04-10',466],
+ ['2026-04-17',448],['2026-04-24',400],['2026-05-01',430],['2026-05-08',460],['2026-05-15',475],['2026-05-22',470],
+ ['2026-05-29',436]
+].map(([date,close])=>({date,close}));
+
+let state = loadState() || structuredClone(SEED);
+// backfill the deployed web-app URL for states saved before cloud sync existed
+if(!state.cloudUrl) state.cloudUrl = SEED.cloudUrl;
+// --- Rugpull_AI: seed tickers from the shared watchlist (tickers.json) ---
+if (Array.isArray(window.__RUGPULL_WATCHLIST__)) {
+  for (const it of window.__RUGPULL_WATCHLIST__) {
+    const sym = (it.symbol || '').toUpperCase().trim();
+    if (sym && !state.tickers[sym]) {
+      state.tickers[sym] = { symbol:sym, name:it.name||sym, color:'#46d6c8',
+        asOf:fromMs(Date.now()), price:null, growth:null, desc:'', quarters:[], prices:[] };
+    }
+  }
+}
+
+/* =========================================================================
+   RENDER
+   ========================================================================= */
+let chart;
+const COL = getComputedStyle(document.documentElement);
+const c = n => COL.getPropertyValue(n).trim();
+
+function activeTk(){ return state.tickers[state.activeTicker]; }
+
+function compute(){
+  const tk = activeTk();
+  const p  = state.params;
+  const ec = p.earningsChange/100;
+  const asOfMs = toMs(tk.asOf);
+  let quarters = Engine.autoExtend(tk.quarters, asOfMs, tk.growth);
+
+  const imp   = Engine.impliedSeries(tk.prices, quarters, ec);
+  const stats = Engine.windowStats(imp, asOfMs, p.sentimentDays);
+  const med = stats.med, sd = stats.sd;
+
+  const price = tk.price ?? (tk.prices.length ? tk.prices[tk.prices.length-1].close : null);
+  const tgt = (med!=null) ? Engine.target(quarters, asOfMs, med, ec) : null;
+
+  // corridor grid: monthly between dStart..dEnd
+  const grid = [];
+  let g = toMs(p.dStart), end = toMs(p.dEnd);
+  while (g <= end){ grid.push(g); const d=new Date(g); d.setUTCMonth(d.getUTCMonth()+1); g=d.getTime(); }
+  const corr = (med!=null) ? Engine.corridor(quarters, grid, med, sd, ec) : [];
+
+  return { tk, quarters, imp, stats, med, sd, price, tgt, corr, asOfMs, ec };
+}
+
+function renderCards(m){
+  const {tk, med, sd, price, tgt, asOfMs} = m;
+  $('#brandTicker').textContent = tk.name.toUpperCase();
+  $('#brandTicker').style.color = tk.color;
+  $('#brandDesc').textContent = tk.desc || '';
+  $('#kpPrice').textContent = money(price);
+  $('#kpPrice').style.color = tk.color;
+  $('#kpPriceLbl').textContent = 'Share price as of '+tk.asOf;
+  $('#kpPE').textContent = med!=null ? med.toFixed(1)+'x' : '—';
+  $('#kpSd').textContent = sd!=null ? sd.toFixed(1)+'x' : '—';
+
+  if (tgt && price){
+    const up = tgt.median/price - 1;
+    $('#targetVal').textContent = money(tgt.median);
+    $('#targetBadge').textContent = pct(up);
+    const bands = [
+      ['#b_h15','#bb_h15', med+1.5*sd, c('--orange')],
+      ['#b_h10','#bb_h10', med+1.0*sd, c('--green')],
+      ['#b_l10','#bb_l10', med-1.0*sd, c('--green')],
+      ['#b_l15','#bb_l15', med-1.5*sd, c('--orange')]
+    ];
+    for (const [vid,bid,mult,col] of bands){
+      const v = tgt.ntm12*mult;
+      $(vid).textContent = money(v); $(vid).style.color = col;
+      $(bid).textContent = pct(v/price-1);
+    }
+  } else {
+    ['#targetVal'].forEach(id=>$(id).textContent='—');
+    $('#targetBadge').textContent='—';
+    ['#b_h15','#b_h10','#b_l10','#b_l15'].forEach(id=>$(id).textContent='—');
+    ['#bb_h15','#bb_h10','#bb_l10','#bb_l15'].forEach(id=>$(id).textContent='—');
+  }
+}
+
+/* shaded "Next 12 Months" region behind the corridor */
+const ntmShade = {
+  id:'ntmShade',
+  beforeDraw(ch){
+    const a = ch.$ntm; if(!a) return;
+    const {ctx, chartArea, scales:{x}} = ch;
+    const x1 = x.getPixelForValue(a.from), x2 = x.getPixelForValue(a.to);
+    ctx.save();
+    ctx.fillStyle='rgba(150,170,220,.07)';
+    ctx.fillRect(x1, chartArea.top, x2-x1, chartArea.bottom-chartArea.top);
+    ctx.strokeStyle='rgba(150,170,220,.35)'; ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.moveTo(x1,chartArea.top); ctx.lineTo(x1,chartArea.bottom); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle='rgba(180,195,235,.6)'; ctx.font="11px 'IBM Plex Mono'"; ctx.textAlign='left';
+    ctx.fillText('Next 12 Months', x1+8, chartArea.top+16);
+    ctx.restore();
+  }
+};
+
+function lineDS(label,color,data,{dash=false,width=2,fill=false}={}){
+  return { label, data, borderColor:color, backgroundColor:color,
+    borderWidth:width, borderDash:dash?[5,5]:[], pointRadius:0, tension:.35,
+    fill, spanGaps:true };
+}
+
+function renderLegend(view, col){
+  const items = view==='corridor' ? [
+    ['Share Price', col],
+    ['SP high (1.5σ)', c('--orange')],
+    ['SP high (1.0σ)', c('--green')],
+    ['SP median', c('--teal')],
+    ['SP low (1.0σ)', c('--green-2')],
+    ['SP low (1.5σ)', c('--orange-2')]
+  ] : [
+    ['Implied fwd P/E', col],
+    ['Median', c('--teal')],
+    ['±1.0σ', c('--green')],
+    ['±1.5σ', c('--orange')]
+  ];
+  $('#legend').innerHTML = items.map(([t,k])=>`<span><i style="background:${k}"></i>${t}</span>`).join('');
+}
+
+function renderChart(m){
+  const {tk, imp, corr, med, sd, asOfMs, price} = m;
+  const view = state.params.view;
+  const col = tk.color;
+  renderLegend(view, col);
+  $('#chartTitle').textContent = view==='corridor' ? 'Implied Share-Price Corridor' : 'Implied Forward P/E Ratio';
+
+  let datasets;
+  if (view==='corridor'){
+    const pt = (key) => corr.filter(p=>p[key]!=null).map(p=>({x:p.ms,y:p[key]}));
+    datasets = [
+      lineDS('SP high (1.5σ)', c('--orange'),  pt('h15'), {width:1.5}),
+      lineDS('SP high (1.0σ)', c('--green'),    pt('h10')),
+      lineDS('SP median',      c('--teal'),     pt('median'), {dash:true,width:3}),
+      lineDS('SP low (1.0σ)',  c('--green-2'),  pt('l10')),
+      lineDS('SP low (1.5σ)',  c('--orange-2'), pt('l15'), {width:1.5}),
+      lineDS('Share Price',    col, imp.map(p=>({x:p.ms,y:p.price})), {width:1.8})
+    ];
+  } else {
+    // P/E view: implied forward P/E over time + flat median & σ guide lines
+    const peData = imp.map(p=>({x:p.ms,y:p.pe}));
+    const xs = imp.length ? [imp[0].ms, imp[imp.length-1].ms] : [];
+    const flat = v => xs.map(x=>({x,y:v}));
+    datasets = [
+      lineDS('+1.5σ', c('--orange'),  flat(med+1.5*sd), {width:1.5}),
+      lineDS('+1.0σ', c('--green'),   flat(med+sd)),
+      lineDS('Median',c('--teal'),    flat(med), {dash:true,width:2.5}),
+      lineDS('-1.0σ', c('--green-2'), flat(med-sd)),
+      lineDS('-1.5σ', c('--orange-2'),flat(med-1.5*sd), {width:1.5}),
+      lineDS('Implied fwd P/E', col, peData, {width:2})
+    ];
+  }
+
+  const cfg = {
+    type:'line',
+    data:{ datasets },
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:{duration:350},
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'#0a1124', borderColor:c('--line-2'), borderWidth:1,
+          titleColor:'#cdd6f0', bodyColor:'#cdd6f0', padding:11, titleFont:{family:'IBM Plex Mono'}, bodyFont:{family:'IBM Plex Mono',size:11},
+          callbacks:{
+            title:(it)=> new Date(it[0].parsed.x).toISOString().slice(0,10),
+            label:(it)=> ' '+it.dataset.label+': '+(view==='corridor'?'$'+it.parsed.y.toFixed(0):it.parsed.y.toFixed(1)+'x')
+          }
+        }
+      },
+      scales:{
+        x:{ type:'linear', min:toMs(state.params.dStart), max:toMs(state.params.dEnd),
+            grid:{color:'rgba(120,140,190,.07)'},
+            ticks:{ color:c('--txt-3'), font:{family:'IBM Plex Mono',size:11},
+              callback:v=>new Date(v).getUTCFullYear(),
+              maxTicksLimit:9, autoSkip:true } },
+        y:{ grid:{color:'rgba(120,140,190,.07)'},
+            ticks:{ color:c('--txt-3'), font:{family:'IBM Plex Mono',size:11},
+              callback:v=> view==='corridor' ? '$'+v.toLocaleString() : v+'x' },
+            title:{display:true,text:view==='corridor'?'Share Price':'Forward P/E',color:c('--txt-3'),font:{size:11}} }
+      }
+    },
+    plugins:[ntmShade]
+  };
+
+  if (chart) chart.destroy();
+  chart = new Chart($('#chart'), cfg);
+  chart.$ntm = view==='corridor' ? { from:asOfMs, to:asOfMs+365*DAY } : null;
+  chart.update();
+}
+
+function render(){
+  // sidebar control labels
+  const p = state.params;
+  $('#sentVal').textContent = p.sentimentDays;
+  $('#sent').value = p.sentimentDays;
+  $('#sent').style.setProperty('--p', ((p.sentimentDays-30)/(720-30)*100)+'%');
+  const tk = activeTk();
+  const asOfMs = toMs(tk.asOf), lo = asOfMs - p.sentimentDays*DAY;
+  $('#sentRange').textContent = `(${fromMs(lo)} → ${tk.asOf})`;
+  $('#qtrVal').textContent = p.numQuarters;
+  $('#qtr').value = p.numQuarters;
+  $('#qtr').style.setProperty('--p', ((p.numQuarters-1)/11*100)+'%');
+  $('#ecVal').textContent = (p.earningsChange>=0?'+':'')+p.earningsChange+'%';
+  $('#ec').value = p.earningsChange;
+  $('#ec').style.setProperty('--p', ((p.earningsChange+100)/200*100)+'%');
+  $('#dStart').value = p.dStart; $('#dEnd').value = p.dEnd;
+  $('#drLabel').textContent = `${p.dStart} → ${p.dEnd}`;
+
+  const m = compute();
+  renderCards(m);
+  renderChart(m);
+  saveState();
+}
+
+function rebuildTickerSelect(){
+  const sel = $('#tickerSelect');
+  sel.innerHTML = Object.values(state.tickers)
+    .map(t=>`<option value="${t.symbol}" ${t.symbol===state.activeTicker?'selected':''}>${t.symbol} — ${t.name}</option>`).join('');
+}
+
+/* =========================================================================
+   SIDEBAR CONTROLS
+   ========================================================================= */
+$('#sent').addEventListener('input',e=>{ state.params.sentimentDays=+e.target.value; render(); });
+$('#qtr').addEventListener('input',e=>{ state.params.numQuarters=+e.target.value; trimQuarters(); render(); });
+$('#ec').addEventListener('input',e=>{ state.params.earningsChange=+e.target.value; render(); });
+$('#dStart').addEventListener('change',e=>{ state.params.dStart=e.target.value; render(); });
+$('#dEnd').addEventListener('change',e=>{ state.params.dEnd=e.target.value; render(); });
+document.querySelectorAll('input[name=view]').forEach(r=>r.addEventListener('change',e=>{ state.params.view=e.target.value; render(); }));
+$('#tickerSelect').addEventListener('change',e=>{ state.activeTicker=e.target.value; const t=activeTk(); state.params.dEnd=state.params.dEnd; render(); });
+
+// "Nbr of quarters" trims how many historical quarters are visible by nudging dStart
+function trimQuarters(){
+  const tk = activeTk();
+  const past = tk.quarters.filter(q=>!q.projected).sort((a,b)=>toMs(b.reportDate)-toMs(a.reportDate));
+  const keep = past.slice(0, state.params.numQuarters);
+  if (keep.length){
+    const earliest = keep[keep.length-1].reportDate;
+    state.params.dStart = earliest;
+  }
+}
+
+/* =========================================================================
+   DRAWER  (data editor)
+   ========================================================================= */
+const drawer = $('#drawer'), scrim = $('#scrim');
+let editingNew = false;
+
+function qtrsToText(qs){ return qs.map(q=>`${q.label}, ${q.reportDate}, ${q.eps}, ${q.projected?1:0}`).join('\n'); }
+function pricesToText(ps){ return ps.map(p=>`${p.date}, ${p.close}`).join('\n'); }
+function parseQtrs(txt){
+  return txt.split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
+    const [label,reportDate,eps,projected] = l.split(',').map(s=>s.trim());
+    return { label, reportDate, eps:+eps, projected: projected==='1'||/true/i.test(projected||'') };
+  }).filter(q=>q.label&&q.reportDate&&!isNaN(q.eps));
+}
+function parsePrices(txt){
+  return txt.split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
+    const [date,close] = l.split(',').map(s=>s.trim());
+    return { date, close:+close };
+  }).filter(p=>p.date&&!isNaN(p.close));
+}
+
+function openDrawer(isNew){
+  editingNew = isNew;
+  const tk = isNew
+    ? { symbol:'', name:'', color:'#46d6c8', asOf:fromMs(Date.now()), price:null, growth:null, desc:'', quarters:[], prices:[] }
+    : activeTk();
+  $('#drawerTitle').textContent = isNew ? 'New ticker' : 'Edit '+tk.symbol;
+  $('#fSym').value=tk.symbol; $('#fName').value=tk.name; $('#fColor').value=tk.color;
+  $('#fAsOf').value=tk.asOf; $('#fPrice').value=tk.price??''; $('#fGrowth').value=tk.growth??'';
+  $('#fQtrs').value=qtrsToText(tk.quarters); $('#fPrices').value=pricesToText(tk.prices);
+  $('#deleteBtn').style.display = isNew ? 'none' : '';
+  $('#editMsg').className='msg'; $('#fmpMsg').className='msg'; $('#cloudMsg').className='msg';
+  $('#cloudUrl').value = state.cloudUrl || '';
+  $('#cloudAuto').checked = !!state.cloudAuto;
+  scrim.classList.add('open'); drawer.classList.add('open');
+}
+function closeDrawer(){ scrim.classList.remove('open'); drawer.classList.remove('open'); }
+
+$('#editBtn').addEventListener('click',()=>openDrawer(false));
+$('#addBtn').addEventListener('click',()=>openDrawer(true));
+$('#cancelBtn').addEventListener('click',closeDrawer);
+scrim.addEventListener('click',closeDrawer);
+
+$('#saveBtn').addEventListener('click',()=>{
+  const sym = $('#fSym').value.trim().toUpperCase();
+  if(!sym){ msg('#editMsg','err','Symbol is required.'); return; }
+  const tk = {
+    symbol:sym, name:$('#fName').value.trim()||sym, color:$('#fColor').value,
+    asOf:$('#fAsOf').value, price:$('#fPrice').value!==''?+$('#fPrice').value:null,
+    growth:$('#fGrowth').value!==''?+$('#fGrowth').value:null,
+    desc: editingNew ? '' : (activeTk().desc||''),
+    quarters: parseQtrs($('#fQtrs').value),
+    prices: parsePrices($('#fPrices').value)
+  };
+  if (editingNew && state.tickers[sym]){ msg('#editMsg','err','That symbol already exists.'); return; }
+  // if renaming, drop the old key
+  if (!editingNew && activeTk().symbol!==sym) delete state.tickers[activeTk().symbol];
+  state.tickers[sym]=tk; state.activeTicker=sym;
+  rebuildTickerSelect();
+  state.params.dEnd = state.params.dEnd; // keep
+  closeDrawer(); render();
+});
+
+$('#deleteBtn').addEventListener('click',()=>{
+  if(Object.keys(state.tickers).length<=1){ msg('#editMsg','err','Keep at least one ticker.'); return; }
+  delete state.tickers[activeTk().symbol];
+  state.activeTicker = Object.keys(state.tickers)[0];
+  rebuildTickerSelect(); closeDrawer(); render();
+});
+
+function msg(sel,kind,text){ const el=$(sel); el.className='msg '+kind; el.textContent=text; }
+
+/* ---------- Export / Import ---------- */
+$('#exportBtn').addEventListener('click',()=>{
+  const blob = new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download='corridor-dataset.json'; a.click(); URL.revokeObjectURL(a.href);
+});
+$('#importBtn').addEventListener('click',()=>$('#importFile').click());
+$('#importFile').addEventListener('change',e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{ try{ state=JSON.parse(r.result); rebuildTickerSelect(); closeDrawer(); render(); }
+    catch(err){ msg('#editMsg','err','Could not parse that file.'); } };
+  r.readAsText(f);
+});
+
+/* =========================================================================
+   CLOUD SYNC — Google Apps Script web app
+   doGet  -> returns { tickers:{...} }
+   doPost -> { action:'save', dataset:{ tickers:{...} } }
+   POST is sent as text/plain so the browser treats it as a "simple request"
+   and skips the CORS preflight that Apps Script can't answer.
+   ========================================================================= */
+$('#cloudUrl').addEventListener('change', e=>{ state.cloudUrl=e.target.value.trim(); saveState(); });
+$('#cloudAuto').addEventListener('change', e=>{ state.cloudAuto=e.target.checked; saveState(); });
+$('#cloudSaveBtn').addEventListener('click', saveToCloud);
+$('#cloudLoadBtn').addEventListener('click', ()=>loadFromCloud(false));
+
+function cloudGuard(){
+  if(location.protocol==='file:'){
+    msg('#cloudMsg','err','This page is open as a local file (file://). Cloud sync needs http(s) — serve it (python3 -m http.server) or use the GitHub Pages URL.');
+    return false;
+  }
+  if(!state.cloudUrl){ msg('#cloudMsg','err','Paste your Apps Script web-app URL first (it ends in /exec).'); return false; }
+  if(!/\/exec\b/.test(state.cloudUrl)){ msg('#cloudMsg','err','That URL should end in /exec — use the Web App deployment URL, not /dev or the editor link.'); return false; }
+  return true;
+}
+
+async function saveToCloud(){
+  if(!cloudGuard()) return;
+  msg('#cloudMsg','ok','Saving all tickers to the cloud…');
+  try{
+    const res = await fetch(state.cloudUrl, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},   // text/plain => no preflight
+      body: JSON.stringify({ action:'save', dataset:{ tickers: state.tickers } })
+    });
+    const data = await res.json();
+    if(data.error) throw new Error(data.error);
+    msg('#cloudMsg','ok',`Saved ${data.tickers} ticker(s) — ${data.eps} EPS rows, ${data.prices} price rows written to the Sheet.`);
+  }catch(err){
+    msg('#cloudMsg','err','Save failed: '+err.message+'  — confirm the deployment access is "Anyone" and the URL ends in /exec.');
+  }
+}
+
+async function loadFromCloud(silent){
+  if(location.protocol==='file:'){ if(!silent) cloudGuard(); return; }
+  if(!state.cloudUrl){ if(!silent) cloudGuard(); return; }
+  if(!silent) msg('#cloudMsg','ok','Loading from the cloud…');
+  try{
+    const res = await fetch(state.cloudUrl, { method:'GET' });
+    const data = await res.json();
+    if(data.error) throw new Error(data.error);
+    if(!data.tickers || !Object.keys(data.tickers).length){
+      if(!silent) msg('#cloudMsg','err','The cloud returned no tickers yet. Save to cloud once to seed the Sheet.');
+      return;
+    }
+    state.tickers = data.tickers;
+    if(!state.tickers[state.activeTicker]) state.activeTicker = Object.keys(state.tickers)[0];
+    rebuildTickerSelect();
+    render();
+    if(!silent) msg('#cloudMsg','ok',`Loaded ${Object.keys(data.tickers).length} ticker(s) from the cloud.`);
+  }catch(err){
+    if(!silent) msg('#cloudMsg','err','Load failed: '+err.message+'  — if it mentions CORS, redeploy the web app with access = Anyone.');
+  }
+}
+
+/* =========================================================================
+   FMP AUTO-FILL
+   stable endpoints (May 2026):
+     prices    https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=SYM&from=YYYY-01-01&apikey=KEY
+     earnings  https://financialmodelingprep.com/stable/earnings?symbol=SYM&apikey=KEY              (epsActual / epsEstimated)
+     estimates https://financialmodelingprep.com/stable/analyst-estimates?symbol=SYM&period=quarter&limit=12&apikey=KEY
+   ========================================================================= */
+$('#fmpBtn').addEventListener('click', fetchFMP);
+
+// One endpoint at a time. Returns {ok,data,error} and reads FMP's own error body.
+async function fmpGet(url){
+  let res;
+  try { res = await fetch(url); }
+  catch(e){ return {ok:false, error:'network blocked — '+e.message}; }   // file:// or true CORS block
+  let body=null; try { body = await res.json(); } catch(_){}
+  const apiErr = body && (body['Error Message'] || body.error);
+  if(!res.ok || apiErr) return {ok:false, error: apiErr || ('HTTP '+res.status)};
+  return {ok:true, data:body};
+}
+
+async function fetchFMP(){
+  const key = $('#fmpKey').value.trim();
+  const sym = $('#fSym').value.trim().toUpperCase();
+  const from = $('#fmpFrom').value || '2022';
+  if(!key || !sym){ msg('#fmpMsg','err','Enter both an FMP key and a symbol.'); return; }
+
+  // #1 cause of "fetch failing": opened as a local file. Browsers block fetch() from file:// pages.
+  if(location.protocol === 'file:'){
+    msg('#fmpMsg','err','This page is open as a local file (file://), and browsers block API calls from file pages. '
+      +'Serve it over http first: in this folder run  python3 -m http.server  then open http://localhost:8000/'
+      +(sym?'':'') + '  — or host it on GitHub Pages. (FMP\u2019s CORS is fine once served.)');
+    return;
+  }
+
+  msg('#fmpMsg','ok','Fetching '+sym+' from FMP…');
+  const base = 'https://financialmodelingprep.com/stable';
+  const today = Date.now();
+  const report = [];
+  let priceOK=false, reported=[], projected=[];
+
+  // ---- prices: try /full, fall back to /light (full is sometimes premium-gated) ----
+  let r = await fmpGet(`${base}/historical-price-eod/full?symbol=${sym}&from=${from}-01-01&apikey=${key}`);
+  if(!r.ok) r = await fmpGet(`${base}/historical-price-eod/light?symbol=${sym}&from=${from}-01-01&apikey=${key}`);
+  if(r.ok){
+    const rows = Array.isArray(r.data) ? r.data : (r.data.historical || []);
+    const weekly = rows.filter((_,i)=>i%5===0).slice().reverse()
+      .map(x=>({date:x.date, close:+(x.adjClose ?? x.adjusted_close ?? x.close)}))
+      .filter(p=>p.close);
+    if(weekly.length){
+      $('#fPrices').value = pricesToText(weekly);
+      $('#fPrice').value = weekly[weekly.length-1].close;
+      $('#fAsOf').value  = weekly[weekly.length-1].date;
+      priceOK=true; report.push('\u2713 prices '+weekly.length);
+    } else report.push('\u2717 prices: empty');
+  } else report.push('\u2717 prices: '+r.error);
+
+  // ---- reported EPS (actuals) ----
+  r = await fmpGet(`${base}/earnings?symbol=${sym}&limit=40&apikey=${key}`);
+  if(r.ok){
+    reported = (Array.isArray(r.data)?r.data:[])
+      .filter(x=>x.epsActual!=null && toMs(x.date)<=today)
+      .map(x=>({label:qLabel(x.date), reportDate:x.date, eps:+x.epsActual, projected:false}));
+    report.push('\u2713 reported '+reported.length+'q');
+  } else report.push('\u2717 reported EPS: '+r.error);
+
+  // ---- forward analyst EPS (this endpoint is PREMIUM on most plans) ----
+  r = await fmpGet(`${base}/analyst-estimates?symbol=${sym}&period=quarter&page=0&limit=12&apikey=${key}`);
+  if(r.ok){
+    projected = (Array.isArray(r.data)?r.data:[])
+      .filter(x=>(x.epsAvg ?? x.estimatedEpsAvg)!=null && toMs(x.date)>today)
+      .map(x=>({label:qLabel(x.date), reportDate:fromMs(toMs(x.date)+30*DAY),
+                eps:+(x.epsAvg ?? x.estimatedEpsAvg), projected:true}));
+    report.push('\u2713 forward '+projected.length+'q');
+  } else report.push('\u2717 forward EPS (premium): '+r.error);
+
+  const all = dedupeByLabel([...reported, ...projected]).sort((a,b)=>toMs(a.reportDate)-toMs(b.reportDate));
+  if(all.length) $('#fQtrs').value = qtrsToText(all);
+  if(!$('#fName').value) $('#fName').value = sym;
+
+  const anyOK = priceOK || reported.length || projected.length;
+  let tail = '';
+  if(anyOK && !projected.length) tail = '  \u2014 no forward estimates pulled (premium endpoint). Set a Fallback growth % below so NTM can still project, then Save.';
+  else if(anyOK) tail = '  \u2014 review, then Save.';
+  else tail = '  \u2014 nothing loaded; the message above is FMP\u2019s reason (usually an invalid/expired key or a plan limit).';
+  msg('#fmpMsg', anyOK?'ok':'err', report.join('  \u2022  ') + tail);
+}
+function qLabel(dateStr){ const d=new Date(dateStr); return 'Q'+(Math.floor(d.getUTCMonth()/3)+1)+' '+d.getUTCFullYear(); }
+function dedupeByLabel(arr){ const seen={}; const out=[]; for(const q of arr){ if(!seen[q.label]){seen[q.label]=1;out.push(q);} } return out; }
+
+/* =========================================================================
+   BOOT
+   ========================================================================= */
+// --- Rugpull_AI: prefill FMP key injected from Streamlit secrets ---
+if (window.__FMP_KEY__) { const k=document.querySelector('#fmpKey'); if(k) k.value=window.__FMP_KEY__; }
+rebuildTickerSelect();
+render();
+if(state.cloudAuto && state.cloudUrl && location.protocol!=='file:'){ loadFromCloud(true); }
+if(!STORE_OK){ console.info('[Corridor] localStorage unavailable (sandbox) — changes live in memory only. Use Export JSON to keep your data, or download/host this file for auto-save.'); }
+</script>
+</body>
+</html>

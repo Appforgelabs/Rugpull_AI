@@ -1,0 +1,20 @@
+{
+  "watchlist": [
+    {
+      "symbol": "NVDA",
+      "name": "NVIDIA"
+    },
+    {
+      "symbol": "AMD",
+      "name": "AMD"
+    },
+    {
+      "symbol": "INTC",
+      "name": "Intel"
+    },
+    {
+      "symbol": "TSLA",
+      "name": "Tesla"
+    }
+  ]
+}
