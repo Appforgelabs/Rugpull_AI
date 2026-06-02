@@ -124,6 +124,96 @@ def simple_dcf(cashflow: list, shares_out: float, price: float,
     }
 
 
+def valuation_multiples(ratios_ttm: dict, key_metrics: list) -> dict:
+    """Pull the multiples you want on screen: P/E, P/S, P/FCF, P/B, EV/EBITDA,
+    dividend yield. Field names drift across FMP routes, so each tries aliases."""
+    km = key_metrics[0] if key_metrics else {}
+    return {
+        "P/E":        _r(_safe(ratios_ttm, "priceEarningsRatioTTM",
+                               "priceToEarningsRatioTTM", "peRatioTTM")),
+        "P/S":        _r(_safe(ratios_ttm, "priceToSalesRatioTTM",
+                               "priceSalesRatioTTM")),
+        "P/FCF":      _r(_safe(ratios_ttm, "priceToFreeCashFlowsRatioTTM",
+                               "pfcfRatioTTM", "priceToFreeCashFlowRatioTTM")),
+        "P/B":        _r(_safe(ratios_ttm, "priceToBookRatioTTM", "pbRatioTTM")),
+        "EV/EBITDA":  _r(_safe(ratios_ttm, "enterpriseValueOverEBITDATTM",
+                               "evToEbitdaTTM",
+                               default=_safe(km, "enterpriseValueOverEBITDA"))),
+        "PEG":        _r(_safe(ratios_ttm, "priceEarningsToGrowthRatioTTM",
+                               "pegRatioTTM")),
+        "Div Yield":  _r(_safe(ratios_ttm, "dividendYieldTTM",
+                               "dividendYielPercentageTTM")),
+        "ROE":        _r(_safe(ratios_ttm, "returnOnEquityTTM", "returnOnEquity")),
+        "Net Margin": _r(_safe(ratios_ttm, "netProfitMarginTTM", "netProfitMargin")),
+    }
+
+
+def pe_distribution(ratios_hist: list) -> dict:
+    """Median + sigma of historical P/E — feeds the valuation corridor bands."""
+    import numpy as _np
+    pes = [_safe(x, "priceEarningsRatio", "peRatio") for x in ratios_hist]
+    pes = [p for p in pes if p == p and p > 0]
+    if not pes:
+        return {"median": None, "sigma": None, "n": 0}
+    return {"median": round(float(_np.median(pes)), 2),
+            "sigma": round(float(_np.std(pes, ddof=1)) if len(pes) > 1 else 0.0, 2),
+            "n": len(pes)}
+
+
+def ntm_eps_from_estimates(estimates: list, as_of_ms: float | None = None) -> dict:
+    """
+    Next-twelve-month EPS = sum of the next 4 quarterly analyst EPS estimates
+    whose period is in the future. Mirrors Engine.ntmEps() in corridor.html.
+
+    FMP field names drift: stable route uses 'epsAvg'/'epsLow'/'epsHigh',
+    some responses use 'estimatedEpsAvg' etc. Both are handled. Returns the
+    consensus NTM EPS plus low/high so the corridor can show an estimate range.
+    """
+    import time as _time
+    if not estimates:
+        return {"ntm_eps": None, "n": 0, "note": "no analyst estimates"}
+
+    now_ms = as_of_ms if as_of_ms is not None else _time.time() * 1000
+
+    def _row_ms(r):
+        d = r.get("date") or r.get("estimatedDate") or ""
+        try:
+            import datetime as _dt
+            return _dt.datetime.fromisoformat(str(d)[:10]).timestamp() * 1000
+        except Exception:
+            return None
+
+    def _eps(r, which):
+        # which in {"Avg","Low","High"}
+        return _safe(r, f"eps{which}", f"estimatedEps{which}",
+                     f"estimatedEPS{which}")
+
+    fwd = []
+    for r in estimates:
+        ms = _row_ms(r)
+        if ms is None or ms <= now_ms:
+            continue
+        avg = _eps(r, "Avg")
+        if avg == avg:  # not NaN
+            fwd.append((ms, avg, _eps(r, "Low"), _eps(r, "High")))
+    fwd.sort(key=lambda x: x[0])
+    nxt = fwd[:4]
+
+    if len(nxt) < 4:
+        return {"ntm_eps": None, "n": len(nxt),
+                "note": "fewer than 4 forward quarters available"}
+
+    ntm = sum(x[1] for x in nxt)
+    lows = [x[2] for x in nxt if x[2] == x[2]]
+    highs = [x[3] for x in nxt if x[3] == x[3]]
+    return {
+        "ntm_eps": round(ntm, 2),
+        "ntm_eps_low": round(sum(lows), 2) if len(lows) == 4 else None,
+        "ntm_eps_high": round(sum(highs), 2) if len(highs) == 4 else None,
+        "n": 4, "source": "analyst_estimates",
+    }
+
+
 def _clamp(x, lo=0.0, hi=1.0):
     if x != x:  # NaN
         return 0.5

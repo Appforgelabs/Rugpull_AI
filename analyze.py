@@ -21,6 +21,7 @@ from fmp_client import FMPClient, FMPError
 import fundamentals as F
 import technicals as T
 import signals as S
+import prediction_zones as PZ
 
 
 def _clean(o):
@@ -87,6 +88,51 @@ def analyze(client: FMPClient, sym: str, sentiment_provider) -> dict:
     levels = T.entry_exit_levels(df) if not df.empty else {}
     forecast = T.naive_forecast(df) if not df.empty else {}
 
+    # extra fundamentals on screen
+    km = client.key_metrics(sym)
+    multiples = F.valuation_multiples(rttm, km)
+    pe_dist = F.pe_distribution(rhist)
+
+    # prediction zones: volatility cone + valuation corridor (both sigma-based)
+    closes = df["close"].tolist() if not df.empty else []
+
+    # NTM EPS — prefer real analyst estimates (matches corridor.html), else proxy
+    ntm_info = {"ntm_eps": None}
+    try:
+        ntm_info = F.ntm_eps_from_estimates(client.estimates(sym))
+    except Exception:
+        ntm_info = {"ntm_eps": None, "note": "estimates unavailable"}
+
+    ntm_eps = ntm_info.get("ntm_eps")
+    eps_source = ntm_info.get("source", "none")
+    if not ntm_eps:
+        # fallback: TTM EPS grown 8% (clearly labeled as a proxy)
+        eps_ttm = None
+        if income:
+            ni = income[0].get("netIncome")
+            if ni and shares:
+                try:
+                    eps_ttm = float(ni) / shares
+                except (TypeError, ValueError):
+                    eps_ttm = None
+        ntm_eps = eps_ttm * 1.08 if eps_ttm else None
+        eps_source = "proxy_ttm_x1.08" if ntm_eps else "none"
+
+    zones = PZ.build_zones(closes, ntm_eps=ntm_eps,
+                           pe_median=pe_dist.get("median"),
+                           pe_sigma=pe_dist.get("sigma"))
+    if zones.get("corridor", {}).get("ok"):
+        zones["corridor"]["eps_source"] = eps_source
+        zones["corridor"]["ntm_eps_low"] = ntm_info.get("ntm_eps_low")
+        zones["corridor"]["ntm_eps_high"] = ntm_info.get("ntm_eps_high")
+
+    # downsampled price series (date, close) for instant native charting
+    series = []
+    if not df.empty:
+        d = df[["date", "close"]].tail(180)
+        series = [{"d": str(r.date.date()), "c": round(float(r.close), 2)}
+                  for r in d.itertuples()]
+
     _result = {
         "symbol": sym.upper(),
         "company": profile.get("companyName", sym.upper()),
@@ -96,6 +142,8 @@ def analyze(client: FMPClient, sym: str, sentiment_provider) -> dict:
         "quality": q, "value": v, "dcf": dcf,
         "momentum": mom, "sentiment": sent,
         "entry_exit": levels, "naive_forecast": forecast,
+        "multiples": multiples, "pe_distribution": pe_dist,
+        "zones": zones, "series": series,
     }
     return _clean(_result)
 

@@ -34,6 +34,7 @@ ENDPOINTS = {
     "ratios_ttm":     "/stable/ratios-ttm?symbol={sym}",
     "history":        "/stable/historical-price-eod/full?symbol={sym}",
     "news_sentiment": "/stable/news/stock?symbols={sym}&limit=50",
+    "estimates":      "/stable/analyst-estimates?symbol={sym}&period=quarter&limit=12",
     # macro proxies (treasury + economic indicators live under stable too)
     "treasury":       "/stable/treasury-rates",
     "econ":           "/stable/economic-indicators?name={sym}",
@@ -104,6 +105,7 @@ class FMPClient:
     def key_metrics(self, sym):    return self.fetch("key_metrics", sym)
     def history(self, sym):        return _normalize_history(self.fetch("history", sym))
     def news(self, sym):           return self.fetch("news_sentiment", sym)
+    def estimates(self, sym):      return self.fetch("estimates", sym)
 
 
 def _first(data):
