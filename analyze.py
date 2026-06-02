@@ -126,10 +126,11 @@ def analyze(client: FMPClient, sym: str, sentiment_provider) -> dict:
         zones["corridor"]["ntm_eps_low"] = ntm_info.get("ntm_eps_low")
         zones["corridor"]["ntm_eps_high"] = ntm_info.get("ntm_eps_high")
 
-    # downsampled price series (date, close) for instant native charting
+    # downsampled price series (date, close) for instant native charting.
+    # keep ~1 year so the chart's 3M/6M/1Y toggle has data to slice.
     series = []
     if not df.empty:
-        d = df[["date", "close"]].tail(180)
+        d = df[["date", "close"]].tail(260)
         series = [{"d": str(r.date.date()), "c": round(float(r.close), 2)}
                   for r in d.itertuples()]
 

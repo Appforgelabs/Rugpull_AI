@@ -55,14 +55,10 @@ def get_client(key: str) -> FMPClient:
     return FMPClient(api_key=key)
 
 
-def show_svg(svg: str, height: int = 320):
-    """Render raw SVG reliably. st.markdown sanitizes <svg> away, so we use a
-    components.html iframe with a transparent background instead."""
-    html = (
-        f'<div style="display:flex;justify-content:center;'
-        f'background:transparent">{svg}</div>'
-    )
-    st.components.v1.html(html, height=height, scrolling=False)
+def show_svg(svg: str, height: int = 430):
+    """Render the interactive chart widget. Uses components.html (not sanitized,
+    unlike st.markdown) so the canvas + JS hover/toggle work."""
+    st.components.v1.html(svg, height=height, scrolling=False)
 
 
 def fetch_and_store(client, sym):
@@ -193,8 +189,8 @@ with tab1:
                             "<span class='muted'>(green ±1σ, red ±2σ; dashed = drift; "
                             f"dotted = valuation corridor · NTM EPS: {src_label})</span>",
                             unsafe_allow_html=True)
-                svg = ZC.render_zone_svg(r.get("series", []), r.get("zones", {}))
-                show_svg(svg, height=320)
+                svg = ZC.render_zone_html(r.get("series", []), r.get("zones", {}))
+                show_svg(svg, height=430)
 
                 # full multiples grid
                 m = r.get("multiples", {})
