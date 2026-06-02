@@ -55,6 +55,16 @@ def get_client(key: str) -> FMPClient:
     return FMPClient(api_key=key)
 
 
+def show_svg(svg: str, height: int = 320):
+    """Render raw SVG reliably. st.markdown sanitizes <svg> away, so we use a
+    components.html iframe with a transparent background instead."""
+    html = (
+        f'<div style="display:flex;justify-content:center;'
+        f'background:transparent">{svg}</div>'
+    )
+    st.components.v1.html(html, height=height, scrolling=False)
+
+
 def fetch_and_store(client, sym):
     """The ONLY place that hits the network. Freezes a snapshot to disk."""
     res = A.analyze(client, sym, S.FMPNewsSentiment(client))
@@ -160,9 +170,11 @@ with tab1:
 
         for r in rows:
             sym = r["symbol"]
+            keep_open = st.session_state.get("just_updated") == sym
             with st.expander(f"{sym} — {r.get('company', sym)}  ·  "
                              f"{r.get('composite_score')}/100  ·  "
-                             f"{A._verdict(r.get('composite_score', 0))}"):
+                             f"{A._verdict(r.get('composite_score', 0))}",
+                             expanded=keep_open):
                 top = st.columns([1, 1, 1, 1])
                 top[0].metric("Price", r.get("price"))
                 top[1].metric("Composite", f"{r.get('composite_score')}/100")
@@ -182,7 +194,7 @@ with tab1:
                             f"dotted = valuation corridor · NTM EPS: {src_label})</span>",
                             unsafe_allow_html=True)
                 svg = ZC.render_zone_svg(r.get("series", []), r.get("zones", {}))
-                st.markdown(svg, unsafe_allow_html=True)
+                show_svg(svg, height=320)
 
                 # full multiples grid
                 m = r.get("multiples", {})
@@ -207,6 +219,7 @@ with tab1:
                 if st.button(f"⟳ Update {sym}", key=f"u_{sym}"):
                     try:
                         fetch_and_store(client, sym)
+                        st.session_state.just_updated = sym
                         st.rerun()
                     except Exception as ex:
                         st.warning(f"{sym}: {ex}")
