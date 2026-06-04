@@ -229,15 +229,26 @@ with tab_trade:
                             ["1min", "5min", "15min", "30min", "1hour"], index=1)
     if st.button("⟳ Update trading data", type="primary"):
         prog = st.progress(0.0)
+        ok_count, fails = 0, []
         for i, s in enumerate(syms):
             try:
                 tr = A.build_trading(client, s, intraday_interval=interval)
-                SS.save_trading(s, tr)
+                if tr.get("ok"):
+                    SS.save_trading(s, tr)
+                    ok_count += 1
+                else:
+                    fails.append(f"{s}: no daily price data returned (rate limit "
+                                 "or symbol issue)")
             except Exception as e:
-                st.warning(f"{s}: {e}")
+                fails.append(f"{s}: {type(e).__name__}: {e}")
             prog.progress((i + 1) / max(len(syms), 1))
         prog.empty()
-        st.rerun()
+        if ok_count:
+            st.success(f"Updated {ok_count}/{len(syms)} tickers.")
+        for f in fails:
+            st.error(f)
+        if ok_count:
+            st.rerun()
 
     trows = []
     for s in syms:

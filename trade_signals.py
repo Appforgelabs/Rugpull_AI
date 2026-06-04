@@ -42,13 +42,22 @@ def to_ohlcv(bars: list) -> pd.DataFrame:
 
 
 def resample(df: pd.DataFrame, rule: str) -> pd.DataFrame:
-    """Resample daily bars to W/M/Q for higher-timeframe RSI."""
+    """Resample daily bars to W/M/Q for higher-timeframe RSI. Frequency aliases
+    changed across pandas versions ('M'->'ME', 'Q'->'QE' in 2.2+), so we try the
+    new alias first and fall back to the legacy one."""
     if df.empty:
         return df
     d = df.set_index("date")
-    out = d.resample(rule).agg({"open": "first", "high": "max", "low": "min",
-                                "close": "last", "volume": "sum"}).dropna()
-    return out.reset_index()
+    agg = {"open": "first", "high": "max", "low": "min",
+           "close": "last", "volume": "sum"}
+    fallbacks = {"ME": "M", "QE": "Q", "W": "W"}
+    for code in (rule, fallbacks.get(rule, rule)):
+        try:
+            out = d.resample(code).agg(agg).dropna()
+            return out.reset_index()
+        except (ValueError, KeyError):
+            continue
+    return pd.DataFrame()
 
 
 # ---- the assembled row -----------------------------------------------------
