@@ -136,7 +136,7 @@ with st.sidebar:
     st.caption(f"Macro: {macro.get('regime','?')} · tilt ×{macro.get('tilt',1.0)}")
 
 # ---- tabs ------------------------------------------------------------------
-tab1, tab2 = st.tabs(["Analyzer", "Corridor Chart"])
+tab1, tab_trade, tab2 = st.tabs(["Analyzer", "Trading", "Corridor Chart"])
 
 with tab1:
     # build rows from STORED snapshots only — no network here
@@ -219,6 +219,107 @@ with tab1:
                         st.rerun()
                     except Exception as ex:
                         st.warning(f"{sym}: {ex}")
+
+with tab_trade:
+    st.caption("Multi-timeframe technicals + a transparent long/short rules "
+               "score. Stored until you Update — the score is indicator agreement, "
+               "not a backtested win-rate.")
+
+    interval = st.selectbox("Intraday interval (for 1-day RSI + session VWAP)",
+                            ["1min", "5min", "15min", "30min", "1hour"], index=1)
+    if st.button("⟳ Update trading data", type="primary"):
+        prog = st.progress(0.0)
+        for i, s in enumerate(syms):
+            try:
+                tr = A.build_trading(client, s, intraday_interval=interval)
+                SS.save_trading(s, tr)
+            except Exception as e:
+                st.warning(f"{s}: {e}")
+            prog.progress((i + 1) / max(len(syms), 1))
+        prog.empty()
+        st.rerun()
+
+    trows = []
+    for s in syms:
+        snap = SS.load_snapshot(s)
+        if snap and snap.get("trading", {}).get("ok"):
+            trows.append(snap["trading"])
+
+    if not trows:
+        st.info("No trading data yet. Hit **⟳ Update trading data** above.")
+    else:
+        # headline long/short table
+        def _arrow(d):
+            return {"LONG": "🟢 LONG", "SHORT": "🔴 SHORT", "NEUTRAL": "⚪ NEUTRAL"}.get(d, d)
+        head = []
+        for r in trows:
+            sg = r.get("signal", {})
+            head.append({
+                "Symbol": r["symbol"], "Price": r.get("price"),
+                "Bias": _arrow(sg.get("direction")),
+                "Prob %": sg.get("probability"),
+                "ADX": sg.get("adx"), "Trend": sg.get("trend_strength"),
+                "RSI 1d": r.get("rsi_1d"), "RSI D": r.get("rsi_D"),
+                "RSI W": r.get("rsi_W"), "RSI M": r.get("rsi_M"),
+            })
+        head.sort(key=lambda x: (x["Prob %"] or 0), reverse=True)
+        st.dataframe(head, use_container_width=True, hide_index=True)
+
+        for r in trows:
+            sg = r.get("signal", {})
+            with st.expander(f"{r['symbol']} · {_arrow(sg.get('direction'))} · "
+                             f"{sg.get('probability')}% · "
+                             f"{sg.get('bull_votes')}↑/{sg.get('bear_votes')}↓"):
+                if not r.get("intraday_available"):
+                    st.caption("⚠ Intraday unavailable on this fetch — 1-day RSI / "
+                               "session VWAP may be blank. Daily/weekly/monthly still valid.")
+
+                # moving averages row
+                st.markdown("**Trend — price vs moving averages**")
+                mcols = st.columns(5)
+                price = r.get("price")
+                for idx, k in enumerate(["sma20", "sma50", "sma200", "sma325"]):
+                    v = r.get(k)
+                    delta = (f"{((price-v)/v*100):+.1f}%" if v and price else None)
+                    mcols[idx].metric(k.upper().replace("SMA", "SMA "), v, delta)
+                mcols[4].metric("VWAP(sess)", r.get("vwap_session") or r.get("vwap_roll20"))
+
+                # oscillators row
+                st.markdown("**Momentum & oscillators**")
+                ocols = st.columns(6)
+                ocols[0].metric("MACD hist", r.get("macd", {}).get("hist"))
+                ocols[1].metric("ADX", r.get("adx"))
+                ocols[2].metric("Stoch %K", r.get("stoch", {}).get("k"))
+                ocols[3].metric("CCI", r.get("cci"))
+                ocols[4].metric("Williams %R", r.get("williams_r"))
+                bb = r.get("bb", {})
+                ocols[5].metric("BB %b", bb.get("pctb"))
+
+                # levels
+                lv1, lv2 = st.columns(2)
+                with lv1:
+                    st.markdown("**Pivot points**")
+                    p = r.get("pivots", {})
+                    if p:
+                        st.write(f"R3 {p.get('R3')} · R2 {p.get('R2')} · R1 {p.get('R1')}")
+                        st.write(f"**P {p.get('P')}**")
+                        st.write(f"S1 {p.get('S1')} · S2 {p.get('S2')} · S3 {p.get('S3')}")
+                with lv2:
+                    st.markdown("**Fibonacci**")
+                    f = r.get("fib", {})
+                    if f:
+                        st.write(f"swing {f.get('low')}–{f.get('high')} ({f.get('dir')})")
+                        st.write(f"0.382 {f.get('0.382')} · 0.5 {f.get('0.5')} · "
+                                 f"0.618 {f.get('0.618')}")
+
+                # the vote breakdown — show the work
+                st.markdown("**Why this bias** (signal votes)")
+                votes = sg.get("votes", [])
+                vtable = [{"Signal": v["signal"],
+                           "Vote": "↑" if v["vote"] > 0 else "↓" if v["vote"] < 0 else "·",
+                           "Note": v["note"]} for v in votes]
+                st.dataframe(vtable, use_container_width=True, hide_index=True)
+                st.caption(sg.get("note", ""))
 
 with tab2:
     st.caption("Original corridor chart. Loads on demand to keep the app fast.")

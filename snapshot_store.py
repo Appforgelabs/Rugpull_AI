@@ -39,16 +39,24 @@ def load_snapshot(sym: str) -> dict | None:
         return None
 
 
-def save_snapshot(sym: str, result: dict, price_series: list | None = None) -> dict:
-    """Freeze a computed analysis + (optional) raw price series to disk."""
+def save_snapshot(sym: str, result: dict, price_series: list | None = None,
+                  trading: dict | None = None) -> dict:
+    """Freeze a computed analysis + (optional) price series + trading row."""
+    existing = load_snapshot(sym) or {}
     payload = {
         "symbol": sym.upper(),
         "fetched_at": int(time.time()),
-        "result": result,
-        "prices": price_series or [],
+        "result": result if result is not None else existing.get("result"),
+        "prices": price_series if price_series is not None else existing.get("prices", []),
+        "trading": trading if trading is not None else existing.get("trading"),
     }
     _path(sym).write_text(json.dumps(payload))
     return payload
+
+
+def save_trading(sym: str, trading: dict) -> dict:
+    """Update just the trading slice of a snapshot, preserving analyzer data."""
+    return save_snapshot(sym, result=None, price_series=None, trading=trading)
 
 
 def age_str(snap: dict) -> str:

@@ -22,6 +22,7 @@ import fundamentals as F
 import technicals as T
 import signals as S
 import prediction_zones as PZ
+import trade_signals as TS
 
 
 def _clean(o):
@@ -47,6 +48,32 @@ WEIGHTS = {
     "sentiment": 0.10,
     "dcf":       0.10,
 }
+
+
+def build_trading(client: FMPClient, sym: str, intraday_interval="5min") -> dict:
+    """Trading-tab data for one ticker: ~2y daily + recent intraday, run through
+    the TA engine. Separate from analyze() so the Analyzer tab stays fast."""
+    import pandas as pd
+
+    hist = client.history(sym)
+    daily = TS.to_ohlcv(hist)
+
+    intraday_df = None
+    session_df = None
+    try:
+        bars = client.intraday(sym, interval=intraday_interval, days_back=7)
+        intraday_df = TS.to_ohlcv(bars)
+        if not intraday_df.empty:
+            # session = bars from the latest calendar date present
+            last_day = intraday_df["date"].dt.date.max()
+            session_df = intraday_df[intraday_df["date"].dt.date == last_day]
+    except Exception:
+        intraday_df = None  # intraday unavailable on plan — degrade gracefully
+
+    row = TS.build_trading_row(daily, intraday_df, session_df)
+    row["symbol"] = sym.upper()
+    row["intraday_available"] = bool(intraday_df is not None and not intraday_df.empty)
+    return _clean(row)
 
 
 def analyze(client: FMPClient, sym: str, sentiment_provider) -> dict:

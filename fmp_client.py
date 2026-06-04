@@ -35,6 +35,7 @@ ENDPOINTS = {
     "history":        "/stable/historical-price-eod/full?symbol={sym}",
     "news_sentiment": "/stable/news/stock?symbols={sym}&limit=50",
     "estimates":      "/stable/analyst-estimates?symbol={sym}&period=quarter&limit=12",
+    "intraday":       "/stable/historical-chart/{interval}?symbol={sym}",
     # macro proxies (treasury + economic indicators live under stable too)
     "treasury":       "/stable/treasury-rates",
     "econ":           "/stable/economic-indicators?name={sym}",
@@ -106,6 +107,15 @@ class FMPClient:
     def history(self, sym):        return _normalize_history(self.fetch("history", sym))
     def news(self, sym):           return self.fetch("news_sentiment", sym)
     def estimates(self, sym):      return self.fetch("estimates", sym)
+
+    def intraday(self, sym, interval="5min", days_back=5):
+        """Intraday OHLCV bars. interval in {1min,5min,15min,30min,1hour,4hour}."""
+        import datetime as _dt
+        to = _dt.date.today()
+        frm = to - _dt.timedelta(days=days_back)
+        path = (f"/stable/historical-chart/{interval}?symbol={sym.upper()}"
+                f"&from={frm}&to={to}")
+        return self._get(path)
 
 
 def _first(data):
