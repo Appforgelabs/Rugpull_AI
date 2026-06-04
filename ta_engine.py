@@ -149,6 +149,51 @@ def session_vwap(df: pd.DataFrame) -> float:
 
 
 # ---- levels ----------------------------------------------------------------
+def supertrend(df: pd.DataFrame, period: int = 10, multiplier: float = 3.0) -> dict:
+    """
+    Supertrend: ATR-banded trend follower. Returns the line value, direction
+    (1 = uptrend/long, -1 = downtrend/short), and distance of price from the
+    line in ATR units (how much room before a flip).
+    """
+    if len(df) < period + 1:
+        return {"value": float("nan"), "dir": 0, "atr_dist": float("nan")}
+    h, l, c = df["high"], df["low"], df["close"]
+    hl2 = (h + l) / 2
+    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
+    atr_ = tr.ewm(alpha=1 / period, adjust=False).mean()
+    upper = hl2 + multiplier * atr_
+    lower = hl2 - multiplier * atr_
+
+    fu = upper.copy()
+    fl = lower.copy()
+    st = pd.Series(index=df.index, dtype=float)
+    dir_ = pd.Series(index=df.index, dtype=int)
+
+    for i in range(len(df)):
+        if i == 0:
+            st.iloc[i] = upper.iloc[i]
+            dir_.iloc[i] = -1
+            continue
+        fu.iloc[i] = (min(upper.iloc[i], fu.iloc[i-1])
+                      if c.iloc[i-1] <= fu.iloc[i-1] else upper.iloc[i])
+        fl.iloc[i] = (max(lower.iloc[i], fl.iloc[i-1])
+                      if c.iloc[i-1] >= fl.iloc[i-1] else lower.iloc[i])
+        if c.iloc[i] > fu.iloc[i-1]:
+            dir_.iloc[i] = 1
+        elif c.iloc[i] < fl.iloc[i-1]:
+            dir_.iloc[i] = -1
+        else:
+            dir_.iloc[i] = dir_.iloc[i-1]
+        st.iloc[i] = fl.iloc[i] if dir_.iloc[i] == 1 else fu.iloc[i]
+
+    line = float(st.iloc[-1])
+    d = int(dir_.iloc[-1])
+    a = float(atr_.iloc[-1]) or float("nan")
+    dist = abs(float(c.iloc[-1]) - line) / a if a == a and a else float("nan")
+    return {"value": round(line, 2), "dir": d,
+            "atr_dist": round(dist, 2) if dist == dist else None}
+
+
 def pivot_points(df: pd.DataFrame) -> dict:
     """Classic floor-trader pivots from the most recent completed bar."""
     if len(df) < 2:

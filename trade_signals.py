@@ -77,6 +77,7 @@ def build_trading_row(daily_df: pd.DataFrame, intraday_df: pd.DataFrame | None,
 
     rsi_intraday = (TA.rsi(intraday_df["close"]) if intraday_df is not None
                     and not intraday_df.empty else float("nan"))
+    stv = TA.supertrend(daily_df)
 
     row = {
         "ok": True, "price": round(price, 2),
@@ -97,6 +98,8 @@ def build_trading_row(daily_df: pd.DataFrame, intraday_df: pd.DataFrame | None,
         "atr14": _r(TA.atr(daily_df, 14)),
         "bb": {k: _r(v) for k, v in TA.bollinger(c).items()},
         "adx": _r(TA.adx(daily_df, 14)),
+        "supertrend": {"value": _r(stv["value"]), "dir": stv["dir"],
+                       "atr_dist": stv["atr_dist"]},
         # oscillators
         "stoch": {k: _r(v) for k, v in TA.stochastic(daily_df).items()},
         "obv": {k: _r(v) for k, v in TA.obv(daily_df).items()},
@@ -197,6 +200,13 @@ def trade_signal(r: dict) -> dict:
         add("OBV slope", 1 if obv_slope > 0 else -1,
             "accumulation" if obv_slope > 0 else "distribution")
 
+    # --- Supertrend: primary trend-follow vote ---
+    stt = r.get("supertrend", {})
+    if stt.get("dir"):
+        add("Supertrend", 1 if stt["dir"] > 0 else -1,
+            f"{'uptrend' if stt['dir']>0 else 'downtrend'}, "
+            f"{stt.get('atr_dist')}·ATR from flip")
+
     net = sum(v["vote"] for v in votes)
     active = [v for v in votes if v["vote"] != 0]
     n = len(active) or 1
@@ -212,15 +222,73 @@ def trade_signal(r: dict) -> dict:
     prob = 50 + lean * 100   # confidence magnitude in the chosen direction
     prob = min(72.0, max(50.0, prob))
 
+    # ---- timeframe-specific setups -------------------------------------
+    swing = _swing_setup(r)
+    day = _day_setup(r)
+
     return {
         "direction": direction,
         "probability": round(prob, 0),
         "net_score": net, "bull_votes": bull, "bear_votes": bear,
         "adx": adx, "trend_strength": "strong" if trend_strong else "weak/none",
         "votes": votes,
+        "swing": swing, "day": day,
         "note": "Rules score = how much indicators agree, NOT a backtested "
                 "win-rate. Capped at 72%. Strong ADX (>=25) widens confidence.",
     }
+
+
+def _swing_setup(r: dict) -> dict:
+    """Swing horizon (days–weeks): weight daily/weekly trend, Supertrend, MACD.
+    Entry/stop/target derived from ATR and Supertrend line."""
+    price = r["price"]
+    st = r.get("supertrend", {})
+    atr = r.get("atr14")
+    rsi_w = r.get("rsi_W")
+    sma50, sma200 = r.get("sma50"), r.get("sma200")
+
+    bull = 0
+    if st.get("dir", 0) > 0: bull += 1
+    if sma50 and sma200 and sma50 > sma200: bull += 1
+    if r.get("macd", {}).get("hist", 0) and r["macd"]["hist"] > 0: bull += 1
+    if price and sma50 and price > sma50: bull += 1
+    if rsi_w is not None and 40 <= rsi_w <= 70: bull += 1  # healthy, not overbought
+
+    bias = "LONG" if bull >= 4 else "SHORT" if bull <= 1 else "WAIT"
+    setup = None
+    if bias == "LONG" and atr:
+        stop = st.get("value") if st.get("dir", 0) > 0 else round(price - 2 * atr, 2)
+        setup = {"entry": price, "stop": stop,
+                 "target": round(price + 3 * atr, 2),
+                 "rr": "~1.5R" if stop else None}
+    return {"bias": bias, "score": bull, "max": 5, "setup": setup,
+            "basis": "daily/weekly trend + Supertrend + MACD"}
+
+
+def _day_setup(r: dict) -> dict:
+    """Day horizon (intraday): weight intraday RSI, VWAP position, short MAs,
+    Stochastic. Needs intraday data to be meaningful."""
+    price = r["price"]
+    vwap = r.get("vwap_session")
+    rsi_1d = r.get("rsi_1d")
+    atr = r.get("atr14")
+    st = r.get("stoch", {}).get("k")
+
+    have_intraday = vwap is not None or rsi_1d is not None
+    bull = 0
+    if vwap and price > vwap: bull += 1
+    if rsi_1d is not None and 40 <= rsi_1d <= 65: bull += 1
+    if st is not None and st < 30: bull += 1   # intraday oversold bounce
+    if price and r.get("sma20") and price > r["sma20"]: bull += 1
+
+    bias = "LONG" if bull >= 3 else "SHORT" if bull <= 1 else "WAIT"
+    setup = None
+    if bias == "LONG" and vwap and atr:
+        setup = {"entry": price, "stop": round(vwap - 0.5 * atr, 2),
+                 "target": round(price + 1.5 * atr, 2), "rr": "~2R"}
+    return {"bias": bias if have_intraday else "NO DATA", "score": bull, "max": 4,
+            "setup": setup, "basis": "intraday RSI + VWAP + Stoch",
+            "have_intraday": have_intraday}
 
 
 def _r(x, n=2):

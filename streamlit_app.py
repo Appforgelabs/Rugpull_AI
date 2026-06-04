@@ -136,7 +136,37 @@ with st.sidebar:
     st.caption(f"Macro: {macro.get('regime','?')} · tilt ×{macro.get('tilt',1.0)}")
 
 # ---- tabs ------------------------------------------------------------------
-tab1, tab_trade, tab2 = st.tabs(["Analyzer", "Trading", "Corridor Chart"])
+tab_dash, tab1, tab_trade, tab2 = st.tabs(
+    ["⬢ Dashboard", "Analyzer", "Trading", "Corridor Chart"])
+
+with tab_dash:
+    import dashboard as DB
+    import datetime as _dt
+    items = []
+    newest = 0
+    for s in syms:
+        snap = SS.load_snapshot(s)
+        if not snap:
+            items.append({"symbol": s, "price": None, "result": None, "trading": None})
+            continue
+        newest = max(newest, snap.get("fetched_at", 0))
+        items.append({
+            "symbol": s,
+            "price": (snap.get("trading") or {}).get("price")
+                     or (snap.get("result") or {}).get("price"),
+            "result": snap.get("result"),
+            "trading": snap.get("trading"),
+        })
+    gen = (_dt.datetime.fromtimestamp(newest).strftime("%Y-%m-%d %H:%M")
+           if newest else "—")
+    html = DB.render_dashboard(items, gen)
+    # wrap with explicit UTF-8 so glyphs/entities render correctly in the iframe
+    st.components.v1.html(
+        f'<meta charset="utf-8">{html}',
+        height=max(360, 150 + 150 * len(items)), scrolling=True)
+    st.caption("Synthesizes Analyzer + Trading snapshots. Update both "
+               "(sidebar **⟳ Update all** and Trading tab **⟳ Update trading "
+               "data**) to populate every lane.")
 
 with tab1:
     # build rows from STORED snapshots only — no network here
