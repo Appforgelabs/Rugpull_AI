@@ -114,6 +114,24 @@ def build_trading_row(daily_df: pd.DataFrame, intraday_df: pd.DataFrame | None,
 
 
 # ---- the transparent rules score ------------------------------------------
+# How forward-looking each signal is. Be honest: almost all price-derived
+# indicators are LAGGING (they transform past prices). Only a couple lean
+# leading. This map drives the leading/lagging labels in the UI.
+SIGNAL_LAG = {
+    "Supertrend": "lagging", "MACD hist": "lagging",
+    "Price vs SMA20": "lagging", "Price vs SMA50": "lagging",
+    "Price vs SMA200": "lagging", "Price vs SMA325": "lagging",
+    "SMA50 vs SMA200": "lagging",
+    "RSI(D)": "lagging", "Stochastic": "lagging", "Williams %R": "lagging",
+    "CCI": "lagging", "OBV slope": "coincident",  # volume can lead price a bit
+    "VWAP": "coincident",
+}
+
+
+def lag_of(name: str) -> str:
+    return SIGNAL_LAG.get(name, "lagging")
+
+
 def trade_signal(r: dict) -> dict:
     """
     Tally independent bull/bear votes across momentum, trend, and oscillators.
@@ -127,7 +145,8 @@ def trade_signal(r: dict) -> dict:
     price = r["price"]
 
     def add(name, vote, note):
-        votes.append({"signal": name, "vote": vote, "note": note})
+        votes.append({"signal": name, "vote": vote, "note": note,
+                      "lag": lag_of(name)})
 
     # --- trend: price vs MAs (the backbone for long/short bias) ---
     for ma_key, label in [("sma20", "SMA20"), ("sma50", "SMA50"),

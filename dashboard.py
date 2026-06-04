@@ -80,10 +80,11 @@ def _invest_lane(result: dict) -> str:
                       10, basis, None)
 
 
-def render_dashboard(items: list, generated_at: str) -> str:
+def render_dashboard(items: list, generated_at: str, macro: dict | None = None) -> str:
     """
     items: list of {symbol, price, result(analyzer dict|None), trading(dict|None)}.
     Sorted into a priority feed: strongest aligned setups first.
+    macro: optional regime dict from macro_engine.build_macro().
     """
     T = THEME
 
@@ -154,6 +155,38 @@ def render_dashboard(items: list, generated_at: str) -> str:
             + '</tr></table></div>'
         )
 
+    # ---- regime banner ----
+    banner = ""
+    if macro and macro.get("ok"):
+        reg = macro.get("regime", "—")
+        rc = {"RISK-ON": T["long"], "RISK-OFF": T["short"]}.get(reg, T["wait"])
+        chips = ""
+        for s in macro.get("signals", [])[:6]:
+            bc = {"risk-on": T["long"], "risk-off": T["short"]}.get(s["bias"], T["dim"])
+            lag = s.get("lag", "")[:4].upper()
+            chips += (
+                f'<span style="display:inline-block;border:1px solid {T["edge"]};'
+                f'border-radius:2px;padding:3px 8px;margin:0 6px 6px 0;'
+                f'font-family:{T["mono"]};font-size:10px">'
+                f'<span style="color:{T["dim"]};font-size:8px">{lag}</span> '
+                f'{_html.escape(s["name"])} '
+                f'<span style="color:{bc}">{_html.escape(str(s["read"]))}</span></span>'
+            )
+        mult = macro.get("risk_multiplier", 1.0)
+        banner = (
+            f'<div style="background:{T["panel"]};border:1px solid {rc};'
+            f'border-radius:4px;padding:12px 16px;margin-bottom:14px">'
+            f'<div style="display:flex;align-items:baseline;gap:14px;margin-bottom:8px">'
+            f'<span style="font-family:{T["mono"]};font-size:9px;letter-spacing:.2em;'
+            f'color:{T["dim"]}">MARKET REGIME</span>'
+            f'<span style="font-family:{T["mono"]};font-size:16px;font-weight:700;'
+            f'letter-spacing:.1em;color:{rc}">{_html.escape(reg)}</span>'
+            f'<span style="font-family:{T["mono"]};font-size:10px;color:{T["dim"]}">'
+            f'conviction ×{mult} · 10y-2y {macro.get("spread_10y_2y","—")} · '
+            f'VIX {macro.get("vix","—")}</span></div>'
+            f'<div>{chips}</div></div>'
+        )
+
     return f"""
 <div style="background:{T['bg']};padding:18px 20px;border-radius:6px;
      font-family:system-ui;color:{T['ink']}">
@@ -168,6 +201,7 @@ def render_dashboard(items: list, generated_at: str) -> str:
     <span style="font-family:{T['mono']};font-size:10px;color:{T['dim']};
           letter-spacing:.1em">SNAPSHOT {_html.escape(generated_at)}</span>
   </div>
+  {banner}
   <div style="display:flex;gap:18px;margin-bottom:14px;font-family:{T['mono']};
        font-size:10px;letter-spacing:.1em;color:{T['dim']}">
     <span>&#9632; <span style="color:{T['long']}">LONG</span></span>
@@ -179,8 +213,9 @@ def render_dashboard(items: list, generated_at: str) -> str:
   <div style="margin-top:14px;font-size:10px;color:{T['dim']};
        font-family:{T['mono']};line-height:1.6;border-top:1px solid {T['edge']};
        padding-top:10px">
-    CONVICTION = INDICATOR AGREEMENT, NOT A WIN-RATE. CAPPED 72%.<br>
-    E/S/T = ENTRY / STOP / TARGET (ATR &amp; SUPERTREND DERIVED). NOT ADVICE.
+    CONVICTION = INDICATOR AGREEMENT &times; REGIME, NOT A WIN-RATE. CAPPED 72%.<br>
+    MOST STOCK SIGNALS ARE LAGGING. MACRO/BREADTH/CURVE LEAN LEADING. E/S/T =
+    ENTRY / STOP / TARGET. NOT ADVICE.
   </div>
 </div>"""
 

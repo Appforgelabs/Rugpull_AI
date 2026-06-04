@@ -23,6 +23,7 @@ import technicals as T
 import signals as S
 import prediction_zones as PZ
 import trade_signals as TS
+import macro_engine as ME
 
 
 def _clean(o):
@@ -50,9 +51,11 @@ WEIGHTS = {
 }
 
 
-def build_trading(client: FMPClient, sym: str, intraday_interval="5min") -> dict:
+def build_trading(client: FMPClient, sym: str, intraday_interval="5min",
+                  spy_closes: list | None = None) -> dict:
     """Trading-tab data for one ticker: ~2y daily + recent intraday, run through
-    the TA engine. Separate from analyze() so the Analyzer tab stays fast."""
+    the TA engine. Separate from analyze() so the Analyzer tab stays fast.
+    If spy_closes is passed, also computes relative strength vs the S&P."""
     import pandas as pd
 
     hist = client.history(sym)
@@ -64,15 +67,19 @@ def build_trading(client: FMPClient, sym: str, intraday_interval="5min") -> dict
         bars = client.intraday(sym, interval=intraday_interval, days_back=7)
         intraday_df = TS.to_ohlcv(bars)
         if not intraday_df.empty:
-            # session = bars from the latest calendar date present
             last_day = intraday_df["date"].dt.date.max()
             session_df = intraday_df[intraday_df["date"].dt.date == last_day]
     except Exception:
-        intraday_df = None  # intraday unavailable on plan — degrade gracefully
+        intraday_df = None
 
     row = TS.build_trading_row(daily, intraday_df, session_df)
     row["symbol"] = sym.upper()
     row["intraday_available"] = bool(intraday_df is not None and not intraday_df.empty)
+
+    # relative strength vs SPY (a leading-ish single-name tell)
+    if spy_closes and not daily.empty:
+        row["rel_strength"] = ME.relative_strength(daily["close"].tolist(), spy_closes)
+
     return _clean(row)
 
 

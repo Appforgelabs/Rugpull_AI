@@ -59,6 +59,24 @@ def save_trading(sym: str, trading: dict) -> dict:
     return save_snapshot(sym, result=None, price_series=None, trading=trading)
 
 
+MACRO_PATH = SNAP_DIR / "_macro.json"
+
+
+def save_macro(macro: dict) -> dict:
+    payload = {"fetched_at": int(time.time()), "macro": macro}
+    MACRO_PATH.write_text(json.dumps(payload))
+    return payload
+
+
+def load_macro() -> dict | None:
+    if not MACRO_PATH.exists():
+        return None
+    try:
+        return json.loads(MACRO_PATH.read_text())
+    except Exception:
+        return None
+
+
 def age_str(snap: dict) -> str:
     if not snap or "fetched_at" not in snap:
         return "never"

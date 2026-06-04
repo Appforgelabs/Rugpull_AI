@@ -68,6 +68,14 @@ def fetch_and_store(client, sym):
     return res
 
 
+def fetch_macro(client):
+    """Fetch + store the shared market-regime snapshot."""
+    import macro_engine as ME
+    m = ME.build_macro(client)
+    SS.save_macro(m)
+    return m
+
+
 # ---- state ----------------------------------------------------------------
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = W.load_watchlist()
@@ -107,6 +115,10 @@ with st.sidebar:
     st.divider()
     if st.button("⟳ Update all", type="primary", use_container_width=True):
         prog = st.progress(0.0)
+        try:
+            fetch_macro(client)   # refresh the market regime first
+        except Exception as e:
+            st.warning(f"macro: {e}")
         for i, s in enumerate(syms):
             try:
                 fetch_and_store(client, s)
@@ -136,12 +148,18 @@ with st.sidebar:
     st.caption(f"Macro: {macro.get('regime','?')} · tilt ×{macro.get('tilt',1.0)}")
 
 # ---- tabs ------------------------------------------------------------------
-tab_dash, tab1, tab_trade, tab2 = st.tabs(
-    ["⬢ Dashboard", "Analyzer", "Trading", "Corridor Chart"])
+tab_dash, tab1, tab_trade, tab_macro, tab_bt, tab2 = st.tabs(
+    ["⬢ Dashboard", "Analyzer", "Trading", "Macro", "Backtest", "Corridor Chart"])
 
 with tab_dash:
     import dashboard as DB
+    import macro_engine as ME
     import datetime as _dt
+
+    macro_snap = SS.load_macro()
+    macro = (macro_snap or {}).get("macro")
+    mult = (macro or {}).get("risk_multiplier", 1.0)
+
     items = []
     newest = 0
     for s in syms:
@@ -150,23 +168,30 @@ with tab_dash:
             items.append({"symbol": s, "price": None, "result": None, "trading": None})
             continue
         newest = max(newest, snap.get("fetched_at", 0))
+        trading = snap.get("trading")
+        # regime re-weight: discount LONGs in risk-off, boost SHORTs, etc.
+        if trading and trading.get("signal"):
+            sg = trading["signal"]
+            base = sg.get("probability")
+            sg["raw_probability"] = base
+            sg["probability"] = ME.apply_regime_to_conviction(
+                base, sg.get("direction"), mult)
         items.append({
             "symbol": s,
-            "price": (snap.get("trading") or {}).get("price")
+            "price": (trading or {}).get("price")
                      or (snap.get("result") or {}).get("price"),
             "result": snap.get("result"),
-            "trading": snap.get("trading"),
+            "trading": trading,
         })
     gen = (_dt.datetime.fromtimestamp(newest).strftime("%Y-%m-%d %H:%M")
            if newest else "—")
-    html = DB.render_dashboard(items, gen)
-    # wrap with explicit UTF-8 so glyphs/entities render correctly in the iframe
+    html = DB.render_dashboard(items, gen, macro=macro)
     st.components.v1.html(
         f'<meta charset="utf-8">{html}',
-        height=max(360, 150 + 150 * len(items)), scrolling=True)
-    st.caption("Synthesizes Analyzer + Trading snapshots. Update both "
-               "(sidebar **⟳ Update all** and Trading tab **⟳ Update trading "
-               "data**) to populate every lane.")
+        height=max(430, 240 + 150 * len(items)), scrolling=True)
+    st.caption("Synthesizes Analyzer + Trading + Macro snapshots. Conviction is "
+               "regime-adjusted. Update via sidebar **⟳ Update all** and Trading "
+               "tab **⟳ Update trading data**.")
 
 with tab1:
     # build rows from STORED snapshots only — no network here
@@ -260,9 +285,17 @@ with tab_trade:
     if st.button("⟳ Update trading data", type="primary"):
         prog = st.progress(0.0)
         ok_count, fails = 0, []
+        # fetch SPY once for relative-strength comparisons
+        spy_closes = None
+        try:
+            import trade_signals as _TS
+            spy_closes = _TS.to_ohlcv(client.history("SPY"))["close"].tolist()
+        except Exception:
+            spy_closes = None
         for i, s in enumerate(syms):
             try:
-                tr = A.build_trading(client, s, intraday_interval=interval)
+                tr = A.build_trading(client, s, intraday_interval=interval,
+                                     spy_closes=spy_closes)
                 if tr.get("ok"):
                     SS.save_trading(s, tr)
                     ok_count += 1
@@ -354,13 +387,150 @@ with tab_trade:
                                  f"0.618 {f.get('0.618')}")
 
                 # the vote breakdown — show the work
-                st.markdown("**Why this bias** (signal votes)")
+                # relative strength vs SPY (leading-ish single-name tell)
+                rs = r.get("rel_strength")
+                if rs and rs.get("ok"):
+                    arrow = "↑ rising" if rs.get("rising") else "↓ falling"
+                    st.markdown(f"**Relative strength vs S&P** "
+                                f"<span class='muted'>(leading)</span>: "
+                                f"{rs['read']} {rs['rs_vs_spy']}% · {arrow}",
+                                unsafe_allow_html=True)
+
+                st.markdown("**Why this bias** (signal votes · LEAD/LAG tagged)")
                 votes = sg.get("votes", [])
                 vtable = [{"Signal": v["signal"],
                            "Vote": "↑" if v["vote"] > 0 else "↓" if v["vote"] < 0 else "·",
+                           "Lag": v.get("lag", "lagging").upper(),
                            "Note": v["note"]} for v in votes]
                 st.dataframe(vtable, use_container_width=True, hide_index=True)
-                st.caption(sg.get("note", ""))
+                st.caption("Most votes are LAGGING (past-price math). Relative "
+                           "strength + macro regime are the leading-er inputs. "
+                           + sg.get("note", ""))
+
+with tab_macro:
+    st.caption("The tide under every single-stock move. Leading signals (curve, "
+               "VIX, breadth) try to see ahead; coincident ones describe now. "
+               "This is context, not prediction.")
+    msnap = SS.load_macro()
+    if not msnap or not msnap.get("macro", {}).get("ok"):
+        st.info("No macro data yet. Hit **⟳ Update all** in the sidebar.")
+    else:
+        mac = msnap["macro"]
+        reg = mac.get("regime", "—")
+        rc = {"RISK-ON": "#3fb37f", "RISK-OFF": "#d6504f"}.get(reg, "#6b7682")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Regime", reg)
+        c2.metric("Conviction ×", mac.get("risk_multiplier"))
+        c3.metric("10y–2y", mac.get("spread_10y_2y"))
+        c4.metric("VIX", mac.get("vix"))
+
+        st.markdown("**Signals** — each tagged by how forward-looking it is")
+        rows = []
+        for s in mac.get("signals", []):
+            rows.append({"Lag": s["lag"].upper(), "Signal": s["name"],
+                         "Read": s["read"], "Value": s["value"],
+                         "Bias": s["bias"]})
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+        lead = [s for s in mac["signals"] if s["lag"] == "leading"]
+        st.markdown(f"**Leading signals ({len(lead)})** — the ones that try to "
+                    "see ahead:")
+        for s in lead:
+            st.write(f"• {s['name']}: **{s['read']}** ({s['bias']})")
+        st.caption(mac.get("note", ""))
+
+with tab_bt:
+    import backtest as BT
+    st.caption("Does any of this have edge? Replays daily swing strategies with "
+               "point-in-time correctness (no lookahead), real costs, and "
+               "buy-and-hold as the benchmark. The number that matters is "
+               "EXCESS vs holding — and whether edge survives out-of-sample.")
+
+    bc1, bc2, bc3 = st.columns([2, 2, 2])
+    bt_sym = bc1.selectbox("Ticker", syms or ["SPY"])
+    strat_name = bc2.selectbox("Strategy", list(BT.STRATEGIES.keys()))
+    yrs = bc3.selectbox("History", [2, 3, 5], index=2)
+
+    oc1, oc2, oc3, oc4 = st.columns(4)
+    allow_short = oc1.checkbox("Allow shorts", value=False)
+    atr_stop = oc2.slider("ATR stop (0=off)", 0.0, 4.0, 2.0, 0.5)
+    cost_bps = oc3.slider("Cost per side (bps)", 0, 30, 5, 1)
+    do_split = oc4.checkbox("Out-of-sample split", value=True)
+
+    if st.button("▶ Run backtest", type="primary"):
+        with st.spinner("Replaying history bar by bar…"):
+            try:
+                import trade_signals as _TS
+                hist = client.history(bt_sym)
+                df = _TS.to_ohlcv(hist)
+                # trim to requested years (~252 trading days/yr + warmup)
+                need = yrs * 252 + 220
+                if len(df) > need:
+                    df = df.iloc[-need:].reset_index(drop=True)
+                fn = BT.STRATEGIES[strat_name]
+                kw = dict(allow_short=allow_short, atr_stop=atr_stop,
+                          commission=cost_bps/10000, slippage=cost_bps/10000)
+                res = BT.run_backtest(df, fn, **kw)
+                split_res = BT.run_split(df, fn, **kw) if do_split else None
+            except Exception as e:
+                res = {"ok": False, "note": f"{type(e).__name__}: {e}"}
+                split_res = None
+
+        if not res.get("ok"):
+            st.error(f"Backtest failed: {res.get('note')}")
+        else:
+            # verdict banner
+            beat = res["beat_hold"]
+            vc = "#3fb37f" if (beat and res["significant"]) else "#e6a23c" if res["significant"] else "#6b7682"
+            st.markdown(
+                f'<div style="border:1px solid {vc};border-radius:4px;padding:12px 16px;'
+                f'margin:8px 0;font-family:JetBrains Mono,monospace;color:{vc};'
+                f'font-size:13px">{res["verdict"]}</div>', unsafe_allow_html=True)
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Strategy return", f"{res['total_return_pct']}%")
+            m2.metric("Buy & hold", f"{res['buy_hold_pct']}%")
+            m3.metric("Excess vs hold", f"{res['excess_vs_hold_pct']}%",
+                      delta=("beat" if beat else "lost"))
+            m4.metric("Sharpe", res["sharpe"])
+            m5, m6, m7, m8 = st.columns(4)
+            m5.metric("Trades", res["num_trades"])
+            m6.metric("Win rate", f"{res['win_rate_pct']}%")
+            m7.metric("Max drawdown", f"{res['max_drawdown_pct']}%")
+            m8.metric("Profit factor", res["profit_factor"])
+            if not res["significant"]:
+                st.warning(f"⚠ Only {res['num_trades']} trades — below 30, not "
+                           "statistically meaningful. Treat as anecdote.")
+
+            # equity curve vs buy & hold
+            eq = res["equity_curve"]
+            bh = res["buy_hold_curve"]
+            L = min(len(eq), len(bh))
+            if L > 1:
+                import pandas as _pd
+                chart_df = _pd.DataFrame({
+                    "Strategy": eq[-L:], "Buy & Hold": bh[-L:]})
+                st.line_chart(chart_df, height=260)
+
+            # out-of-sample
+            if split_res and split_res.get("ok"):
+                hc = "#3fb37f" if split_res["holds_up"] else "#d6504f"
+                st.markdown(
+                    f'<div style="border-left:3px solid {hc};padding:8px 14px;'
+                    f'margin:10px 0;font-size:13px">{split_res["verdict"]}</div>',
+                    unsafe_allow_html=True)
+                sp1, sp2 = st.columns(2)
+                ins, oos = split_res["in_sample"], split_res["out_sample"]
+                sp1.metric("In-sample excess", f"{ins['excess_vs_hold_pct']}%",
+                           f"{ins['num_trades']} trades")
+                sp2.metric("Out-sample excess", f"{oos['excess_vs_hold_pct']}%",
+                           f"{oos['num_trades']} trades")
+            elif split_res:
+                st.caption(f"Split test skipped: {split_res.get('note')}")
+
+            # trade list
+            with st.expander(f"Trade log ({res['num_trades']} trades)"):
+                st.dataframe(res["trades"], use_container_width=True, hide_index=True)
 
 with tab2:
     st.caption("Original corridor chart. Loads on demand to keep the app fast.")
