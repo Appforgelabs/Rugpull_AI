@@ -84,3 +84,26 @@ streamlit_app.py web UI wrapper (sliders for weights, key via st.secrets).
   discipline is on you.
 
 Not financial advice — this is tooling to inform your own decisions.
+
+## Cross-computer sync (Learn tab + starred values)
+
+Your watchlist and starred values can sync across computers using the SAME
+Google Apps Script your corridor chart already uses — but in a separate
+namespace so it never touches the corridor's ticker data.
+
+**One-time Apps Script edit** (adds the `rugpull` namespace):
+Open your Apps Script project (Code.gs) and add the two helper functions plus
+the two routing lines shown in `cloud_sync.py` (the `APPS_SCRIPT_ADDON` string).
+In short:
+1. Add `_rugpullGet(key)` and `_rugpullSave(key, dataset)` helpers.
+2. In `doGet(e)`: if `e.parameter.key` is present, return `_rugpullGet(key)`.
+3. In `doPost(e)`: if `req.action === 'saveApp'`, return `_rugpullSave(req.key, req.dataset)`.
+4. Re-deploy the web app (Manage deployments → new version), access = Anyone.
+
+**Then in the app:**
+- Best: add `APPS_SCRIPT_URL = "https://script.google.com/macros/s/.../exec"`
+  to Streamlit **Settings → Secrets**. The app auto-loads your data on startup.
+- Or paste the URL into the sidebar "Cloud sync" box per session.
+- Use **⬆ Save cloud** after changes, **⬇ Load cloud** on another computer.
+
+Your progress (watchlist + starred) now follows you everywhere.

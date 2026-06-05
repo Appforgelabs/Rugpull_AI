@@ -76,9 +76,36 @@ def fetch_macro(client):
     return m
 
 
+def get_cloud_url():
+    """The corridor's Apps Script URL, from secrets or session."""
+    try:
+        if "APPS_SCRIPT_URL" in st.secrets:
+            return st.secrets["APPS_SCRIPT_URL"]
+    except Exception:
+        pass
+    return st.session_state.get("cloud_url", "")
+
+
 # ---- state ----------------------------------------------------------------
 if "watchlist" not in st.session_state:
     st.session_state.watchlist = W.load_watchlist()
+if "starred" not in st.session_state:
+    st.session_state.starred = []
+# one-time auto-pull from cloud so progress follows you across computers
+if "cloud_pulled" not in st.session_state:
+    st.session_state.cloud_pulled = True
+    _url = get_cloud_url()
+    if _url:
+        try:
+            import cloud_sync as CS
+            blob = CS.load_app_state(_url)
+            if blob:
+                if blob.get("watchlist"):
+                    st.session_state.watchlist = blob["watchlist"]
+                if blob.get("starred"):
+                    st.session_state.starred = blob["starred"]
+        except Exception:
+            pass  # silent on startup; manual sync surfaces errors
 
 st.title("Rugpull_AI")
 st.markdown('<div class="muted">Transparent scoring + σ-based probability zones. '
@@ -136,6 +163,45 @@ with st.sidebar:
                        data=json.dumps({"watchlist": st.session_state.watchlist}, indent=2),
                        file_name="tickers.json", mime="application/json")
 
+    # ---- cloud sync (cross-computer, via your corridor Apps Script) ----
+    st.divider()
+    st.caption("☁ Cloud sync (cross-computer)")
+    cloud_url = get_cloud_url()
+    if not cloud_url:
+        st.session_state.cloud_url = st.text_input(
+            "Apps Script URL (ends in /exec)",
+            value=st.session_state.get("cloud_url", ""), type="password",
+            help="The same web-app URL your corridor chart uses. Best set once "
+                 "in Settings → Secrets as APPS_SCRIPT_URL.")
+        cloud_url = st.session_state.cloud_url
+    else:
+        st.caption("✓ URL loaded from secrets")
+
+    sc1, sc2 = st.columns(2)
+    if sc1.button("⬆ Save cloud", use_container_width=True):
+        try:
+            import cloud_sync as CS
+            CS.save_app_state(cloud_url, st.session_state.watchlist,
+                              st.session_state.starred)
+            st.success("Saved to cloud")
+        except Exception as e:
+            st.error(f"{e}")
+    if sc2.button("⬇ Load cloud", use_container_width=True):
+        try:
+            import cloud_sync as CS
+            blob = CS.load_app_state(cloud_url)
+            if blob:
+                st.session_state.watchlist = blob.get("watchlist",
+                                                       st.session_state.watchlist)
+                st.session_state.starred = blob.get("starred",
+                                                     st.session_state.starred)
+                st.success("Loaded from cloud")
+                st.rerun()
+            else:
+                st.info("Nothing saved in cloud yet — Save once to seed it.")
+        except Exception as e:
+            st.error(f"{e}")
+
     st.divider()
     st.caption("Weights")
     w = {}
@@ -148,8 +214,9 @@ with st.sidebar:
     st.caption(f"Macro: {macro.get('regime','?')} · tilt ×{macro.get('tilt',1.0)}")
 
 # ---- tabs ------------------------------------------------------------------
-tab_dash, tab1, tab_trade, tab_macro, tab_bt, tab2 = st.tabs(
-    ["⬢ Dashboard", "Analyzer", "Trading", "Macro", "Backtest", "Corridor Chart"])
+tab_dash, tab1, tab_trade, tab_macro, tab_bt, tab_learn, tab2 = st.tabs(
+    ["⬢ Dashboard", "Analyzer", "Trading", "Macro", "Backtest", "Learn",
+     "Corridor Chart"])
 
 with tab_dash:
     import dashboard as DB
@@ -194,6 +261,15 @@ with tab_dash:
                "tab **⟳ Update trading data**.")
 
 with tab1:
+    # starred values (synced across computers)
+    if st.session_state.starred:
+        with st.expander(f"⭐ Starred values ({len(st.session_state.starred)}) "
+                         "— synced to cloud", expanded=False):
+            st.dataframe(st.session_state.starred, use_container_width=True,
+                         hide_index=True)
+            st.caption("Save these across computers with **⬆ Save cloud** in the "
+                       "sidebar. Star/unstar from each ticker below.")
+
     # build rows from STORED snapshots only — no network here
     rows = []
     for s in syms:
@@ -233,6 +309,25 @@ with tab1:
                 top[2].metric("P/E", pe)
                 pd_ = r.get("pe_distribution", {})
                 top[3].metric("P/E hist median", pd_.get("median"))
+
+                # ⭐ star/save this ticker's key values (syncs to cloud)
+                starred_syms = [s["symbol"] for s in st.session_state.starred]
+                if sym in starred_syms:
+                    if st.button(f"★ Starred — remove {sym}", key=f"unstar_{sym}"):
+                        st.session_state.starred = [
+                            s for s in st.session_state.starred if s["symbol"] != sym]
+                        st.rerun()
+                else:
+                    if st.button(f"☆ Star {sym}", key=f"star_{sym}"):
+                        import datetime as _dt2
+                        st.session_state.starred.append({
+                            "symbol": sym, "price": r.get("price"),
+                            "composite": r.get("composite_score"),
+                            "pe": pe, "ps": r.get("multiples", {}).get("P/S"),
+                            "pfcf": r.get("multiples", {}).get("P/FCF"),
+                            "saved_at": _dt2.date.today().isoformat(),
+                        })
+                        st.rerun()
 
                 # zone chart — native SVG, instant
                 corr = r.get("zones", {}).get("corridor", {})
@@ -531,6 +626,38 @@ with tab_bt:
             # trade list
             with st.expander(f"Trade log ({res['num_trades']} trades)"):
                 st.dataframe(res["trades"], use_container_width=True, hide_index=True)
+
+with tab_learn:
+    import learn_content as LC
+    st.subheader("How to read every signal in this app")
+    st.caption("What each value measures, how to use it well, and the honest "
+               "caveat. Most chart indicators are lagging — they describe the "
+               "past. Read the principles first.")
+
+    with st.expander("⭐ Core principles — read these first", expanded=True):
+        for p in LC.PRINCIPLES:
+            st.markdown(f"- {p}")
+
+    cats = sorted(set(g[1] for g in LC.GUIDE), key=lambda c: c)
+    pick = st.multiselect("Filter by category", cats, default=[])
+    lag_color = {"leading": "#3fb37f", "coincident": "#e6a23c",
+                 "lagging": "#d6504f", "n/a": "#6b7682"}
+
+    for name, cat, lag, what, read, use, watch in LC.GUIDE:
+        if pick and cat not in pick:
+            continue
+        lc = lag_color.get(lag, "#6b7682")
+        with st.expander(f"{name}  ·  {cat}"):
+            if lag != "n/a":
+                st.markdown(
+                    f'<span style="color:{lc};border:1px solid {lc};'
+                    f'border-radius:3px;padding:1px 8px;font-size:11px;'
+                    f'font-weight:600">{lag.upper()}</span>',
+                    unsafe_allow_html=True)
+            st.markdown(f"**What it is** — {what}")
+            st.markdown(f"**How to read it** — {read}")
+            st.markdown(f"**How to use it well** — {use}")
+            st.markdown(f"**Watch out** — {watch}")
 
 with tab2:
     st.caption("Original corridor chart. Loads on demand to keep the app fast.")
