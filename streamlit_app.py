@@ -426,7 +426,7 @@ with tab_trade:
     trows = []
     for s in syms:
         snap = SS.load_snapshot(s)
-        if snap and snap.get("trading", {}).get("ok"):
+        if snap and (snap.get("trading") or {}).get("ok"):
             trows.append(snap["trading"])
 
     if not trows:
@@ -522,7 +522,7 @@ with tab_macro:
                "VIX, breadth) try to see ahead; coincident ones describe now. "
                "This is context, not prediction.")
     msnap = SS.load_macro()
-    if not msnap or not msnap.get("macro", {}).get("ok"):
+    if not msnap or not (msnap.get("macro") or {}).get("ok"):
         st.info("No macro data yet. Hit **⟳ Update all** in the sidebar.")
     else:
         mac = msnap["macro"]
