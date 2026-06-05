@@ -30,6 +30,35 @@ def _valid(url: str) -> bool:
     return bool(url) and "/exec" in url
 
 
+def test_connection(url: str) -> dict:
+    """Ping the Apps Script and report whether it's reachable and namespace-aware.
+    Returns {ok, status, detail}."""
+    if not _valid(url):
+        return {"ok": False, "status": "bad url", "detail": "URL must end in /exec"}
+    try:
+        r = requests.get(url, params={"key": KEY}, timeout=TIMEOUT)
+    except Exception as e:
+        return {"ok": False, "status": "unreachable", "detail": str(e)[:120]}
+    if r.status_code != 200:
+        return {"ok": False, "status": f"HTTP {r.status_code}",
+                "detail": "deployment may not be public (access: Anyone)"}
+    try:
+        data = r.json()
+    except Exception:
+        return {"ok": False, "status": "not JSON",
+                "detail": "got HTML — usually a login/permission page; redeploy "
+                          "with access = Anyone"}
+    if isinstance(data, dict) and "app" in data:
+        return {"ok": True, "status": "connected",
+                "detail": "namespace OK · "
+                          + ("data present" if data.get("app") else "empty (save once)")}
+    if isinstance(data, dict) and "tickers" in data:
+        return {"ok": False, "status": "old script",
+                "detail": "reached the script but the rugpull namespace addon "
+                          "isn't installed — paste the latest Code.gs"}
+    return {"ok": False, "status": "unexpected", "detail": str(data)[:120]}
+
+
 def load_app_state(url: str) -> dict | None:
     """Pull the saved {watchlist, starred} blob. Returns None if nothing saved
     or the script doesn't support the namespace yet."""

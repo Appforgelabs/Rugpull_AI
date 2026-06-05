@@ -76,14 +76,20 @@ def fetch_macro(client):
     return m
 
 
+# Your Google Apps Script web-app URL (same backend as the corridor chart).
+# Hardcoded so sync works on every computer with no setup. Override via the
+# APPS_SCRIPT_URL secret if you ever rotate it.
+APPS_SCRIPT_URL_DEFAULT = "https://script.google.com/macros/s/AKfycbzbGKyBiLmWS7736GDhYeoKt6QHJIFKbywKza83N7AcfoeE4-cSYV4sNvydwuvK4LGWRw/exec"
+
+
 def get_cloud_url():
-    """The corridor's Apps Script URL, from secrets or session."""
+    """The corridor's Apps Script URL: secret > session entry > hardcoded default."""
     try:
         if "APPS_SCRIPT_URL" in st.secrets:
             return st.secrets["APPS_SCRIPT_URL"]
     except Exception:
         pass
-    return st.session_state.get("cloud_url", "")
+    return st.session_state.get("cloud_url") or APPS_SCRIPT_URL_DEFAULT
 
 
 # ---- state ----------------------------------------------------------------
@@ -129,15 +135,16 @@ with st.sidebar:
             st.session_state.watchlist.append({"symbol": new, "name": new})
             st.rerun()
 
-    for i, t in enumerate(list(st.session_state.watchlist)):
-        c1, c2 = st.columns([4, 1])
-        snap = SS.load_snapshot(t["symbol"])
-        age = SS.age_str(snap) if snap else "no data"
-        c1.write(f"**{t['symbol']}**  ·  {age}")
-        if c2.button("✕", key=f"d{i}"):
-            st.session_state.watchlist.pop(i)
-            SS.delete_snapshot(t["symbol"])
-            st.rerun()
+    with st.expander(f"📋 {len(syms)} tickers", expanded=False):
+        for i, t in enumerate(list(st.session_state.watchlist)):
+            c1, c2 = st.columns([4, 1])
+            snap = SS.load_snapshot(t["symbol"])
+            age = SS.age_str(snap) if snap else "no data"
+            c1.write(f"**{t['symbol']}**  ·  {age}")
+            if c2.button("✕", key=f"d{i}"):
+                st.session_state.watchlist.pop(i)
+                SS.delete_snapshot(t["symbol"])
+                st.rerun()
 
     st.divider()
     if st.button("⟳ Update all", type="primary", use_container_width=True):
@@ -170,12 +177,20 @@ with st.sidebar:
     if not cloud_url:
         st.session_state.cloud_url = st.text_input(
             "Apps Script URL (ends in /exec)",
-            value=st.session_state.get("cloud_url", ""), type="password",
-            help="The same web-app URL your corridor chart uses. Best set once "
-                 "in Settings → Secrets as APPS_SCRIPT_URL.")
+            value=st.session_state.get("cloud_url", ""), type="password")
         cloud_url = st.session_state.cloud_url
     else:
-        st.caption("✓ URL loaded from secrets")
+        st.caption("✓ Connected (built-in URL)")
+
+    if st.button("🔌 Test connection", use_container_width=True):
+        import cloud_sync as CS
+        st.session_state.conn_status = CS.test_connection(cloud_url)
+    cs = st.session_state.get("conn_status")
+    if cs:
+        if cs["ok"]:
+            st.success(f"🟢 {cs['status']} — {cs['detail']}")
+        else:
+            st.error(f"🔴 {cs['status']} — {cs['detail']}")
 
     sc1, sc2 = st.columns(2)
     if sc1.button("⬆ Save cloud", use_container_width=True):
