@@ -144,11 +144,27 @@ def build_macro(client) -> dict:
     total = on + off or 1
 
     if net >= 2:
-        regime, mult = "RISK-ON", 1.15
+        regime = "RISK-ON"
     elif net <= -2:
-        regime, mult = "RISK-OFF", 0.82
+        regime = "RISK-OFF"
     else:
-        regime, mult = "MIXED / NEUTRAL", 1.0
+        regime = "MIXED / NEUTRAL"
+
+    # multiplier from LEADING signals only (curve, VIX, breadth). SPY/QQQ trend
+    # is excluded here because the stocks' own MA votes already embed the index
+    # move — including it again would double-count the same information and
+    # inflate conviction most at tops.
+    lead_on = sum(1 for s in signals
+                  if s["bias"] == "risk-on" and s["lag"] == LEADING)
+    lead_off = sum(1 for s in signals
+                   if s["bias"] == "risk-off" and s["lag"] == LEADING)
+    lead_net = lead_on - lead_off
+    if lead_net >= 1:
+        mult = 1.12
+    elif lead_net <= -1:
+        mult = 0.85
+    else:
+        mult = 1.0
 
     return {
         "ok": bool(signals),
@@ -157,9 +173,10 @@ def build_macro(client) -> dict:
         "spread_10y_2y": spread, "y10": y10, "y2": y2, "vix": vix_level,
         "spy_dir": spy_trend.get("dir", 0), "qqq_dir": qqq_trend.get("dir", 0),
         "signals": signals,
-        "note": "Regime sets the tide. risk_multiplier re-weights single-stock "
-                "LONG conviction (risk-off discounts bullish names fighting the "
-                "tide). Leading != certain.",
+        "note": "Regime sets the tide. risk_multiplier (from LEADING signals "
+                "only — curve/VIX/breadth) re-weights single-stock conviction "
+                "without double-counting the index trend already in each "
+                "stock's MAs. Leading != certain.",
     }
 
 

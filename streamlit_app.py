@@ -506,16 +506,31 @@ with tab_trade:
                                 f"{rs['read']} {rs['rs_vs_spy']}% · {arrow}",
                                 unsafe_allow_html=True)
 
-                st.markdown("**Why this bias** (signal votes · LEAD/LAG tagged)")
+                # mean-reversion stretch — shown SEPARATELY from trend bias
+                mr = sg.get("meanrev")
+                if mr and mr.get("stretch") is not None:
+                    sc = ("#d6504f" if mr["stretch"] >= 0.5
+                          else "#3fb37f" if mr["stretch"] <= -0.5 else "#8899aa")
+                    st.markdown(
+                        f"**Mean-reversion stretch** "
+                        f"<span class='muted'>(separate philosophy — not in the "
+                        f"trend score)</span>: "
+                        f"<span style='color:{sc}'>{mr['state']} "
+                        f"({mr['stretch']:+.2f})</span>", unsafe_allow_html=True)
+                    st.caption("Trend says direction; stretch says whether it's "
+                               "extended right now. 'Uptrend + stretched up' = "
+                               "wait for a pullback rather than chase.")
+
+                st.markdown("**Why this bias** (TREND votes · LEAD/LAG tagged)")
                 votes = sg.get("votes", [])
                 vtable = [{"Signal": v["signal"],
                            "Vote": "↑" if v["vote"] > 0 else "↓" if v["vote"] < 0 else "·",
                            "Lag": v.get("lag", "lagging").upper(),
                            "Note": v["note"]} for v in votes]
                 st.dataframe(vtable, use_container_width=True, hide_index=True)
-                st.caption("Most votes are LAGGING (past-price math). Relative "
-                           "strength + macro regime are the leading-er inputs. "
-                           + sg.get("note", ""))
+                st.caption("Trend votes are deduplicated (MA structure is one "
+                           "vote, not five). Oscillator stretch is shown above, "
+                           "not counted here. " + sg.get("note", ""))
 
 with tab_macro:
     st.caption("The tide under every single-stock move. Leading signals (curve, "

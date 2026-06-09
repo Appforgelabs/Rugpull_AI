@@ -57,6 +57,16 @@ def indicator_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     # Supertrend direction (causal cumulative)
     d["st_dir"] = _supertrend_dir(d, 10, 3.0)
+
+    # Causal weekly RSI: RSI on a 5-trading-day resample, forward-filled to each
+    # daily bar. Uses only data <= i (the resample is expanding, not future).
+    wk_close = c.groupby(np.arange(len(c)) // 5).last()
+    wdelta = wk_close.diff()
+    wgain = wdelta.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
+    wloss = (-wdelta.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
+    wrsi = 100 - 100 / (1 + wgain / wloss.replace(0, np.nan))
+    # map each daily bar to its week bucket's RSI
+    d["rsi_w"] = wrsi.reindex(np.arange(len(c)) // 5).values
     return d
 
 
@@ -112,29 +122,18 @@ def strat_rsi_meanrev(d, i):
 
 
 def strat_swing_composite(d, i):
-    """Mirrors the dashboard's swing logic on daily bars: trend MAs + Supertrend
-    + MACD must broadly align."""
+    """Replays the DASHBOARD's exact swing logic via the shared core in
+    trade_signals, so backtest verdicts are about the real signal, not a
+    cousin. Weekly RSI is approximated from a 5-bar resample up to bar i."""
+    import trade_signals as TS
     price = d["close"].iloc[i]
-    bull = 0
-    bear = 0
-    for ma in ["sma50", "sma200"]:
-        v = d[ma].iloc[i]
-        if v == v:
-            bull += price > v
-            bear += price < v
-    st = d["st_dir"].iloc[i]
-    if st == st:
-        bull += st > 0
-        bear += st < 0
-    mh = d["macd_hist"].iloc[i]
-    if mh == mh:
-        bull += mh > 0
-        bear += mh < 0
-    if bull >= 3:
-        return 1
-    if bear >= 3:
-        return -1
-    return 0
+    st_dir = d["st_dir"].iloc[i]
+    sma50 = d["sma50"].iloc[i]
+    sma200 = d["sma200"].iloc[i]
+    macd_hist = d["macd_hist"].iloc[i]
+    rsi_w = d["rsi_w"].iloc[i] if "rsi_w" in d.columns else float("nan")
+    core = TS.swing_bias_core(price, st_dir, sma50, sma200, macd_hist, rsi_w)
+    return 1 if core["bias"] == "LONG" else -1 if core["bias"] == "SHORT" else 0
 
 
 STRATEGIES = {
