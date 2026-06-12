@@ -67,6 +67,49 @@ def indicator_frame(df: pd.DataFrame) -> pd.DataFrame:
     wrsi = 100 - 100 / (1 + wgain / wloss.replace(0, np.nan))
     # map each daily bar to its week bucket's RSI
     d["rsi_w"] = wrsi.reindex(np.arange(len(c)) // 5).values
+
+    # Causal volume-shelf distances (incremental time-decayed volume-at-price).
+    # 1%-wide log-price bins anchored at the first close (grid is data-
+    # independent, so no lookahead); each bar decays history then adds itself.
+    lam = 0.5 ** (1 / 126)
+    base = float(c.iloc[0])
+    binw = 0.01
+    def _bidx(p):
+        return int(np.floor(np.log(max(p, 1e-9) / base) / binw))
+    bins = {}
+    sup = np.full(len(d), np.nan)
+    res = np.full(len(d), np.nan)
+    tpv = ((d["high"] + d["low"] + d["close"]) / 3).values
+    vol = d["volume"].values
+    atrv = d["atr"].values
+    for i in range(len(d)):
+        for k in bins:
+            bins[k] *= lam
+        bi = _bidx(tpv[i])
+        bins[bi] = bins.get(bi, 0.0) + (vol[i] if vol[i] == vol[i] else 0.0)
+        if i < 40 or atrv[i] != atrv[i] or atrv[i] <= 0:
+            continue
+        vals = [v for v in bins.values() if v > 0]
+        if not vals:
+            continue
+        thresh = 1.5 * (sum(vals) / len(vals))
+        pb = _bidx(d["close"].iloc[i])
+        price_i = d["close"].iloc[i]
+        best_s = best_r = None
+        for k, v in bins.items():
+            if v < thresh:
+                continue
+            mid = base * np.exp((k + 0.5) * binw)
+            if mid <= price_i and (best_s is None or mid > best_s):
+                best_s = mid
+            if mid > price_i and (best_r is None or mid < best_r):
+                best_r = mid
+        if best_s is not None:
+            sup[i] = (price_i - best_s) / atrv[i]
+        if best_r is not None:
+            res[i] = (best_r - price_i) / atrv[i]
+    d["vp_support_dist"] = sup
+    d["vp_resist_dist"] = res
     return d
 
 
@@ -136,11 +179,29 @@ def strat_swing_composite(d, i):
     return 1 if core["bias"] == "LONG" else -1 if core["bias"] == "SHORT" else 0
 
 
+def strat_volume_shelf(d, i):
+    """Disposition-effect zones: long when price sits on a strong volume shelf
+    (within 1 ATR above it) in an uptrend; short the mirror under overhead
+    supply in a downtrend. Shelf columns are computed causally."""
+    price = d["close"].iloc[i]
+    sma200 = d["sma200"].iloc[i]
+    s = d["vp_support_dist"].iloc[i]
+    r = d["vp_resist_dist"].iloc[i]
+    if sma200 != sma200:
+        return 0
+    if price > sma200 and s == s and 0 <= s <= 1.0:
+        return 1
+    if price < sma200 and r == r and 0 <= r <= 1.0:
+        return -1
+    return 0
+
+
 STRATEGIES = {
     "Supertrend trend-follow": strat_supertrend,
     "SMA 50/200 cross": strat_sma_cross,
     "RSI mean-reversion": strat_rsi_meanrev,
     "Swing composite (dashboard logic)": strat_swing_composite,
+    "Volume shelf bounce (CVD zones)": strat_volume_shelf,
 }
 
 

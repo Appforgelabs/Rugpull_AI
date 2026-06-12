@@ -352,9 +352,11 @@ with tab1:
                              "none": "unavailable"}.get(esrc, esrc)
                 st.markdown("**Probability zones** "
                             "<span class='muted'>(green ±1σ, red ±2σ; dashed = drift; "
-                            f"dotted = valuation corridor · NTM EPS: {src_label})</span>",
+                            f"dotted = valuation corridor · NTM EPS: {src_label} · "
+                            f"side bands = volume-at-price, approx CVD)</span>",
                             unsafe_allow_html=True)
-                svg = ZC.render_zone_html(r.get("series", []), r.get("zones", {}))
+                svg = ZC.render_zone_html(r.get("series", []), r.get("zones", {}),
+                                          profile=r.get("volume_profile"))
                 show_svg(svg, height=430)
 
                 # full multiples grid
@@ -505,6 +507,19 @@ with tab_trade:
                                 f"<span class='muted'>(leading)</span>: "
                                 f"{rs['read']} {rs['rs_vs_spy']}% · {arrow}",
                                 unsafe_allow_html=True)
+
+                # volume-at-price shelves (disposition-effect zones)
+                vp = r.get("vp")
+                if vp:
+                    st.markdown("**Volume shelves** "
+                                "<span class='muted'>(approx CVD · reaction "
+                                "zones, not forecasts)</span>",
+                                unsafe_allow_html=True)
+                    v1, v2, v3, v4 = st.columns(4)
+                    v1.metric("POC", vp.get("poc"))
+                    v2.metric("Support shelf", vp.get("support") or "—")
+                    v3.metric("Overhead shelf", vp.get("resistance") or "—")
+                    v4.metric("Supply above", f"{vp.get('overhead_pct')}%")
 
                 # mean-reversion stretch — shown SEPARATELY from trend bias
                 mr = sg.get("meanrev")

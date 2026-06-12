@@ -16,7 +16,8 @@ from __future__ import annotations
 import json
 
 
-def render_zone_html(series: list, zones: dict, height: int = 380) -> str:
+def render_zone_html(series: list, zones: dict, height: int = 380,
+                     profile: dict | None = None) -> str:
     """series: [{'d':'YYYY-MM-DD','c':float}]  zones: prediction_zones.build_zones()."""
     cone = (zones or {}).get("cone", {})
     corr = (zones or {}).get("corridor", {})
@@ -29,6 +30,7 @@ def render_zone_html(series: list, zones: dict, height: int = 380) -> str:
         "cone": cone.get("points", []),
         "spot": cone.get("spot"),
         "corridor": corr if corr.get("ok") else None,
+        "profile": profile if (profile or {}).get("ok") else None,
     })
 
     # NOTE: doubled braces {{ }} are literal braces for the JS; {payload}/{height}
@@ -111,6 +113,35 @@ def render_zone_html(series: list, zones: dict, height: int = 380) -> str:
       const i=Math.round((nH-1)*t/ticks), p=hist[i]; if(!p) continue;
       const dt=new Date(p.d), lab=(dt.getMonth()+1)+'/'+String(dt.getFullYear()).slice(2);
       ctx.fillText(lab, xH(i), L.h-8);
+    }}
+
+    // volume-at-price bands (approx CVD: green=net buying, red=net selling)
+    if (D.profile && D.profile.bins) {{
+      const bins = D.profile.bins;
+      let mx = 0; for (const b of bins) mx = Math.max(mx, b.vol);
+      if (mx > 0) {{
+        for (const b of bins) {{
+          const y1 = Y(b.hi), y2 = Y(b.lo);
+          if (y2 < L.padT || y1 > L.padT + plotH) continue;
+          const w = (b.vol / mx) * plotW * 0.16;
+          ctx.fillStyle = b.delta >= 0 ? 'rgba(63,179,127,0.16)' : 'rgba(214,90,90,0.16)';
+          ctx.fillRect(L.padL, Math.max(y1, L.padT), w,
+                       Math.min(y2, L.padT + plotH) - Math.max(y1, L.padT));
+          if (b.hvn) {{
+            ctx.strokeStyle = b.delta >= 0 ? 'rgba(63,179,127,0.5)' : 'rgba(214,90,90,0.5)';
+            ctx.strokeRect(L.padL, Math.max(y1, L.padT), w,
+                           Math.min(y2, L.padT + plotH) - Math.max(y1, L.padT));
+          }}
+        }}
+        if (D.profile.poc != null) {{
+          const yp = Y(D.profile.poc);
+          ctx.setLineDash([6,3]); ctx.strokeStyle = '#e6a23c'; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(L.padL, yp); ctx.lineTo(L.padL + plotW, yp); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#e6a23c'; ctx.font = '9px system-ui'; ctx.textAlign = 'left';
+          ctx.fillText('POC', L.padL + 2, yp - 3);
+        }}
+      }}
     }}
 
     // RED ±2σ zone

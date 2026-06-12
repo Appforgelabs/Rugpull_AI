@@ -170,6 +170,12 @@ GUIDE = [
      "Read it as agreement strength, NOT odds of winning. Open the vote breakdown to see what's driving it.",
      "Indicators are correlated, so 'many agree' overstates the evidence. Only the backtest tells you real win-rate."),
 
+    ("Volume Profile / CVD (approx)", "Volume", "coincident",
+     "Time-decayed volume at each price level, split into estimated buyer- vs seller-controlled volume (a bar approximation of CVD, not tick data).",
+     "Heavy bands = price zones where lots of cost basis lives (POC = the heaviest). Green tint = net buying there; red = net selling. Thin gaps = price tends to move fast through them.",
+     "Disposition-effect logic: trapped buyers above price create overhead supply (resistance); heavy zones below tend to be defended (support). Buy near a strong shelf with a stop below the gap; expect stalls at overhead shelves.",
+     "These are REACTION zones, not forecasts — and the logic decays (capitulation, taxes, stops). The delta split is an estimate from bar shape, not true order-flow data. Backtest it before trusting it."),
+
     ("Backtest verdict", "Validation", "n/a",
      "Replays a strategy on history with costs and no lookahead, vs buy-and-hold.",
      "The number that matters is EXCESS vs holding, and whether edge survives out-of-sample.",

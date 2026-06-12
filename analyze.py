@@ -24,6 +24,7 @@ import signals as S
 import prediction_zones as PZ
 import trade_signals as TS
 import macro_engine as ME
+import volume_profile as VP
 
 
 def _clean(o):
@@ -75,6 +76,14 @@ def build_trading(client: FMPClient, sym: str, intraday_interval="5min",
     row = TS.build_trading_row(daily, intraday_df, session_df)
     row["symbol"] = sym.upper()
     row["intraday_available"] = bool(intraday_df is not None and not intraday_df.empty)
+
+    # volume-shelf summary for the Trading tab
+    vp = VP.build_profile(daily) if not daily.empty else {"ok": False}
+    if vp.get("ok"):
+        row["vp"] = {"poc": vp["poc"],
+                      "support": (vp.get("support_shelf") or {}).get("mid"),
+                      "resistance": (vp.get("resistance_shelf") or {}).get("mid"),
+                      "overhead_pct": vp["overhead_supply_pct"]}
 
     # relative strength vs SPY (a leading-ish single-name tell)
     if spy_closes and not daily.empty:
@@ -160,6 +169,9 @@ def analyze(client: FMPClient, sym: str, sentiment_provider) -> dict:
         zones["corridor"]["ntm_eps_low"] = ntm_info.get("ntm_eps_low")
         zones["corridor"]["ntm_eps_high"] = ntm_info.get("ntm_eps_high")
 
+    # volume-at-price reaction zones (approximated CVD split)
+    vp = VP.build_profile(df) if not df.empty else {"ok": False}
+
     # downsampled price series (date, close) for instant native charting.
     # keep ~1 year so the chart's 3M/6M/1Y toggle has data to slice.
     series = []
@@ -179,6 +191,7 @@ def analyze(client: FMPClient, sym: str, sentiment_provider) -> dict:
         "entry_exit": levels, "naive_forecast": forecast,
         "multiples": multiples, "pe_distribution": pe_dist,
         "zones": zones, "series": series,
+        "volume_profile": vp,
     }
     return _clean(_result)
 
