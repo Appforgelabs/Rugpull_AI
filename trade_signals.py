@@ -77,7 +77,8 @@ def resample(df: pd.DataFrame, rule: str) -> pd.DataFrame:
 
 # ---- the assembled row -----------------------------------------------------
 def build_trading_row(daily_df: pd.DataFrame, intraday_df: pd.DataFrame | None,
-                      intraday_session_df: pd.DataFrame | None) -> dict:
+                      intraday_session_df: pd.DataFrame | None,
+                      weights: dict | None = None) -> dict:
     if daily_df.empty:
         return {"ok": False}
 
@@ -116,7 +117,7 @@ def build_trading_row(daily_df: pd.DataFrame, intraday_df: pd.DataFrame | None,
         "pivots": TA.pivot_points(daily_df),
         "fib": TA.fib_levels(daily_df),
     }
-    row["signal"] = trade_signal(row)
+    row["signal"] = trade_signal(row, weights=weights)
     return row
 
 
@@ -151,7 +152,7 @@ def oscillator_stretch(r: dict) -> dict:
 
 
 # ---- the trend score (deduplicated votes) -----------------------------------
-def trade_signal(r: dict) -> dict:
+def trade_signal(r: dict, weights: dict | None = None) -> dict:
     votes = []
     price = r["price"]
 
@@ -207,14 +208,19 @@ def trade_signal(r: dict) -> dict:
                                      f"info only — not in trend score)")
 
     trend_votes = [v for v in votes if v["signal"] != "Oscillator stretch"]
-    net = sum(v["vote"] for v in trend_votes)
+    # learned weights: signals with a proven hit-rate speak louder (tracker)
+    w = weights or {}
+    for v in trend_votes:
+        v["weight"] = w.get(v["signal"], 1.0)
+    net = sum(v["vote"] * v.get("weight", 1.0) for v in trend_votes)
     active = [v for v in trend_votes if v["vote"] != 0]
     n = len(active) or 1
     bull = sum(1 for v in active if v["vote"] > 0)
     bear = sum(1 for v in active if v["vote"] < 0)
 
     direction = "LONG" if net > 0 else "SHORT" if net < 0 else "NEUTRAL"
-    agreement = abs(net) / n
+    wsum = sum(v.get("weight", 1.0) for v in active) or 1
+    agreement = min(1.0, abs(net) / wsum)
 
     adx = r.get("adx")
     trend_strong = adx is not None and adx >= 25
@@ -227,7 +233,7 @@ def trade_signal(r: dict) -> dict:
     return {
         "direction": direction,
         "probability": round(prob, 0),
-        "net_score": net, "bull_votes": bull, "bear_votes": bear,
+        "net_score": round(float(net), 2), "bull_votes": bull, "bear_votes": bear,
         "adx": adx, "trend_strength": "strong" if trend_strong else "weak/none",
         "votes": votes,
         "meanrev": mr,

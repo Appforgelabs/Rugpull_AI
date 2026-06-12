@@ -160,6 +160,13 @@ with st.sidebar:
                 st.warning(f"{s}: {e}")
             prog.progress((i + 1) / max(len(syms), 1))
         prog.empty()
+        try:
+            import prediction_tracker as PT
+            cyc = PT.auto_cycle(syms, SS.load_snapshot, get_cloud_url())
+            st.toast(f"Tracker: +{cyc['recorded']} recorded, "
+                     f"{cyc['scored']} scored, {cyc['pending']} pending")
+        except Exception:
+            pass
         st.rerun()
 
     ca, cb = st.columns(2)
@@ -229,9 +236,9 @@ with st.sidebar:
     st.caption(f"Macro: {macro.get('regime','?')} · tilt ×{macro.get('tilt',1.0)}")
 
 # ---- tabs ------------------------------------------------------------------
-tab_dash, tab1, tab_trade, tab_macro, tab_bt, tab_learn, tab2 = st.tabs(
-    ["⬢ Dashboard", "Analyzer", "Trading", "Macro", "Backtest", "Learn",
-     "Corridor Chart"])
+tab_dash, tab1, tab_trade, tab_sc, tab_macro, tab_bt, tab_learn, tab2 = st.tabs(
+    ["⬢ Dashboard", "Analyzer", "Trading", "Scenarios", "Macro", "Backtest",
+     "Learn", "Corridor Chart"])
 
 with tab_dash:
     import dashboard as DB
@@ -397,6 +404,8 @@ with tab_trade:
     if st.button("⟳ Update trading data", type="primary"):
         prog = st.progress(0.0)
         ok_count, fails = 0, []
+        import prediction_tracker as PT
+        _learned_weights = PT.signal_weights(PT.load_ledger(get_cloud_url()))
         # fetch SPY once for relative-strength comparisons
         spy_closes = None
         try:
@@ -407,7 +416,8 @@ with tab_trade:
         for i, s in enumerate(syms):
             try:
                 tr = A.build_trading(client, s, intraday_interval=interval,
-                                     spy_closes=spy_closes)
+                                     spy_closes=spy_closes,
+                                     weights=_learned_weights)
                 if tr.get("ok"):
                     SS.save_trading(s, tr)
                     ok_count += 1
@@ -419,6 +429,12 @@ with tab_trade:
             prog.progress((i + 1) / max(len(syms), 1))
         prog.empty()
         if ok_count:
+            try:
+                cyc = PT.auto_cycle(syms, SS.load_snapshot, get_cloud_url())
+                st.toast(f"Tracker: +{cyc['recorded']} recorded, "
+                         f"{cyc['scored']} scored")
+            except Exception:
+                pass
             st.success(f"Updated {ok_count}/{len(syms)} tickers.")
         for f in fails:
             st.error(f)
@@ -546,6 +562,81 @@ with tab_trade:
                 st.caption("Trend votes are deduplicated (MA structure is one "
                            "vote, not five). Oscillator stretch is shown above, "
                            "not counted here. " + sg.get("note", ""))
+
+with tab_sc:
+    import scenario_engine as SE
+    import prediction_tracker as PT
+    st.caption("Possible near-term paths, simulated by resampling this stock's "
+               "own past returns (block bootstrap). The spread IS the message. "
+               "Below: the app's prediction ledger — it records its calls, "
+               "scores them later, and re-weights signals that have been right.")
+
+    s1, s2, s3 = st.columns([2, 2, 2])
+    sc_sym = s1.selectbox("Ticker", syms or ["SPY"], key="sc_sym")
+    sc_h = s2.selectbox("Horizon", ["21 days (~1M)", "63 days (~3M)"], key="sc_h")
+    sc_seed = s3.checkbox("New roll each run", value=True,
+                          help="Off = reproducible paths")
+    horizon = 21 if sc_h.startswith("21") else 63
+
+    snap = SS.load_snapshot(sc_sym)
+    series = (snap or {}).get("result", {}).get("series") or              (snap or {}).get("prices") or []
+    if not series:
+        st.info("No stored prices for this ticker — hit ⟳ Update all first.")
+    else:
+        closes = [p["c"] for p in series]
+        sim = SE.simulate(closes, horizon=horizon,
+                          seed=None if sc_seed else 42)
+        if not sim.get("ok"):
+            st.warning(sim.get("note"))
+        else:
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Spot", f"${sim['spot']}")
+            c2.metric(f"P(above spot in {horizon}d)",
+                      f"{sim['prob_above_spot']}%")
+            c3.metric("Median path ends", f"${sim['median_end']}")
+            c4.metric("P10 – P90 range",
+                      f"${sim['p10_end']} – ${sim['p90_end']}")
+            st.components.v1.html(
+                '<meta charset="utf-8">'
+                + SE.render_scenarios_html(series, sim), height=400)
+            st.caption("Teal fan = 25–75% / 10–90% of simulated outcomes · "
+                       "amber dash = median path · faint lines = sample paths "
+                       "(green ended up, red ended down). "
+                       + sim["note"])
+
+    st.divider()
+    st.subheader("Prediction ledger — the app grading itself")
+    ledger = PT.load_ledger(get_cloud_url())
+    preds = ledger.get("predictions", [])
+    n_scored = sum(1 for p in preds if p.get("scored"))
+    overall = (ledger.get("stats") or {}).get("OVERALL", {})
+    l1, l2, l3, l4 = st.columns(4)
+    l1.metric("Calls recorded", len(preds))
+    l2.metric("Scored (≥1wk old)", n_scored)
+    hr = (overall.get("hits", 0) / overall["n"] * 100) if overall.get("n") else None
+    l3.metric("Overall hit-rate", f"{hr:.0f}%" if hr is not None else "—")
+    l4.metric("Signals re-weighted", len(PT.signal_weights(ledger)))
+
+    rows = PT.stats_table(ledger)
+    if rows:
+        st.markdown("**Per-signal track record** — weights >1 mean a signal "
+                    "earned a louder vote; <1 means it's been muted:")
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+    else:
+        st.info("No scored predictions yet. The loop is automatic: every "
+                "Update records the day's calls; once a call is a week old, "
+                "the next Update scores it and the weights adapt. Just keep "
+                "updating — the track record builds itself.")
+
+    if preds:
+        with st.expander(f"Raw ledger ({len(preds)} calls)"):
+            show = [{"Date": p["date"], "Sym": p["symbol"],
+                     "Dir": p.get("direction"), "Conv": p.get("probability"),
+                     "Result %": p.get("realized_ret_pct", "pending"),
+                     "Correct": ("✓" if p.get("correct") else "✗")
+                                if p.get("scored") and "correct" in p else "…"}
+                    for p in reversed(preds[-100:])]
+            st.dataframe(show, use_container_width=True, hide_index=True)
 
 with tab_macro:
     st.caption("The tide under every single-stock move. Leading signals (curve, "

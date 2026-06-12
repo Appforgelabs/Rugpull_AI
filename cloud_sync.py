@@ -59,6 +59,37 @@ def test_connection(url: str) -> dict:
     return {"ok": False, "status": "unexpected", "detail": str(data)[:120]}
 
 
+def load_blob(url: str, key: str) -> dict | None:
+    """Generic namespaced load (same protocol as app state, any key)."""
+    if not _valid(url):
+        raise CloudError("URL must end in /exec")
+    try:
+        r = requests.get(url, params={"key": key}, timeout=TIMEOUT)
+        data = r.json()
+    except Exception as e:
+        raise CloudError(f"load failed: {e}")
+    if isinstance(data, dict) and data.get("error"):
+        raise CloudError(data["error"])
+    return data.get("app") if isinstance(data, dict) else None
+
+
+def save_blob(url: str, key: str, dataset: dict) -> dict:
+    """Generic namespaced save (any key, isolated from corridor tickers)."""
+    if not _valid(url):
+        raise CloudError("URL must end in /exec")
+    payload = {"action": "saveApp", "key": key, "dataset": dataset}
+    try:
+        r = requests.post(url, data=json.dumps(payload),
+                          headers={"Content-Type": "text/plain;charset=utf-8"},
+                          timeout=TIMEOUT)
+        data = r.json()
+    except Exception as e:
+        raise CloudError(f"save failed: {e}")
+    if isinstance(data, dict) and data.get("error"):
+        raise CloudError(data["error"])
+    return data if isinstance(data, dict) else {"ok": True}
+
+
 def load_app_state(url: str) -> dict | None:
     """Pull the saved {watchlist, starred} blob. Returns None if nothing saved
     or the script doesn't support the namespace yet."""

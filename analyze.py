@@ -53,7 +53,8 @@ WEIGHTS = {
 
 
 def build_trading(client: FMPClient, sym: str, intraday_interval="5min",
-                  spy_closes: list | None = None) -> dict:
+                  spy_closes: list | None = None,
+                  weights: dict | None = None) -> dict:
     """Trading-tab data for one ticker: ~2y daily + recent intraday, run through
     the TA engine. Separate from analyze() so the Analyzer tab stays fast.
     If spy_closes is passed, also computes relative strength vs the S&P."""
@@ -73,7 +74,8 @@ def build_trading(client: FMPClient, sym: str, intraday_interval="5min",
     except Exception:
         intraday_df = None
 
-    row = TS.build_trading_row(daily, intraday_df, session_df)
+    row = TS.build_trading_row(daily, intraday_df, session_df,
+                               weights=weights)
     row["symbol"] = sym.upper()
     row["intraday_available"] = bool(intraday_df is not None and not intraday_df.empty)
 
