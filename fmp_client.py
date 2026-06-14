@@ -30,6 +30,7 @@ ENDPOINTS = {
     "balance":        "/stable/balance-sheet-statement?symbol={sym}&period=annual&limit=6",
     "cashflow":       "/stable/cash-flow-statement?symbol={sym}&period=annual&limit=6",
     "ratios":         "/stable/ratios?symbol={sym}&period=annual&limit=6",
+    "earnings":       "/stable/earnings?symbol={sym}&limit=40",
     "key_metrics":    "/stable/key-metrics?symbol={sym}&period=annual&limit=6",
     "ratios_ttm":     "/stable/ratios-ttm?symbol={sym}",
     "history":        "/stable/historical-price-eod/full?symbol={sym}",
@@ -102,6 +103,7 @@ class FMPClient:
     def balance(self, sym):        return self.fetch("balance", sym)
     def cashflow(self, sym):       return self.fetch("cashflow", sym)
     def ratios(self, sym):         return self.fetch("ratios", sym)
+    def earnings(self, sym):       return self.fetch("earnings", sym)
     def ratios_ttm(self, sym):     return _first(self.fetch("ratios_ttm", sym))
     def key_metrics(self, sym):    return self.fetch("key_metrics", sym)
     def history(self, sym):        return _normalize_history(self.fetch("history", sym))

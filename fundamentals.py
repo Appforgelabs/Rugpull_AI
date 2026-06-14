@@ -222,3 +222,73 @@ def _clamp(x, lo=0.0, hi=1.0):
 
 def _r(x, n=2):
     return None if x != x else round(x, n)
+
+
+def pe_distribution_from_prices(price_hist, earnings, lookback_days=900) -> dict:
+    """Compute the historical P/E median+sigma the way the corridor chart does:
+    daily close (from /stable/historical-price-eod) divided by trailing-12-month
+    EPS (summed from /stable/earnings), instead of relying on the ratios
+    endpoint. Robust on plans where /stable/ratios returns no history.
+
+    price_hist: normalized history list of {date, close}.
+    earnings: list of {date, eps/epsActual/...} quarterly rows.
+    """
+    import numpy as _np
+    import datetime as _dt
+
+    if not price_hist or not earnings:
+        return {"median": None, "sigma": None, "n": 0, "source": "none"}
+
+    # build sorted (date, eps) quarters
+    q = []
+    for e in earnings:
+        d = e.get("date")
+        eps = None
+        for k in ("eps", "epsActual", "epsActualEstimate", "epsdiluted",
+                  "epsActualReported"):
+            if e.get(k) is not None:
+                try:
+                    eps = float(e[k]); break
+                except (TypeError, ValueError):
+                    pass
+        if d and eps is not None:
+            try:
+                q.append((_dt.date.fromisoformat(str(d)[:10]), eps))
+            except ValueError:
+                pass
+    q.sort()
+    if len(q) < 4:
+        return {"median": None, "sigma": None, "n": 0, "source": "none"}
+
+    def ttm_eps_asof(day):
+        # sum the 4 most recent quarterly EPS on/before `day`
+        prior = [eps for (dt, eps) in q if dt <= day]
+        if len(prior) < 4:
+            return None
+        return sum(prior[-4:])
+
+    pes = []
+    cutoff = _dt.date.today() - _dt.timedelta(days=lookback_days)
+    for row in price_hist:
+        ds = row.get("date")
+        c = row.get("close")
+        if not ds or c is None:
+            continue
+        try:
+            day = _dt.date.fromisoformat(str(ds)[:10])
+        except ValueError:
+            continue
+        if day < cutoff:
+            continue
+        ttm = ttm_eps_asof(day)
+        if ttm and ttm > 0:
+            pe = float(c) / ttm
+            if 0 < pe < 500:           # drop nonsense
+                pes.append(pe)
+
+    if len(pes) < 20:
+        return {"median": None, "sigma": None, "n": len(pes), "source": "none"}
+    arr = _np.array(pes)
+    return {"median": round(float(_np.median(arr)), 2),
+            "sigma": round(float(arr.std(ddof=1)), 2),
+            "n": len(pes), "source": "price/earnings"}

@@ -137,6 +137,14 @@ def analyze(client: FMPClient, sym: str, sentiment_provider) -> dict:
     km = client.key_metrics(sym)
     multiples = F.valuation_multiples(rttm, km)
     pe_dist = F.pe_distribution(rhist)
+    # Fallback: if the ratios endpoint gave no usable P/E history (common on
+    # some FMP plans), compute it from prices ÷ TTM EPS like the corridor chart.
+    if not pe_dist.get("median"):
+        try:
+            pe_dist = F.pe_distribution_from_prices(
+                client.history(sym), client.earnings(sym))
+        except Exception:
+            pass
 
     # prediction zones: volatility cone + valuation corridor (both sigma-based)
     closes = df["close"].tolist() if not df.empty else []
@@ -168,6 +176,7 @@ def analyze(client: FMPClient, sym: str, sentiment_provider) -> dict:
                            pe_sigma=pe_dist.get("sigma"))
     if zones.get("corridor", {}).get("ok"):
         zones["corridor"]["eps_source"] = eps_source
+        zones["corridor"]["pe_source"] = pe_dist.get("source", "ratios")
         zones["corridor"]["ntm_eps_low"] = ntm_info.get("ntm_eps_low")
         zones["corridor"]["ntm_eps_high"] = ntm_info.get("ntm_eps_high")
 
