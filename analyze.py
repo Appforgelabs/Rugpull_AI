@@ -137,14 +137,20 @@ def analyze(client: FMPClient, sym: str, sentiment_provider) -> dict:
     km = client.key_metrics(sym)
     multiples = F.valuation_multiples(rttm, km)
     pe_dist = F.pe_distribution(rhist)
+    pe_debug = f"ratios:n={pe_dist.get('n', 0)}"
     # Fallback: if the ratios endpoint gave no usable P/E history (common on
     # some FMP plans), compute it from prices ÷ TTM EPS like the corridor chart.
     if not pe_dist.get("median"):
         try:
-            pe_dist = F.pe_distribution_from_prices(
-                client.history(sym), client.earnings(sym))
-        except Exception:
-            pass
+            eh = client.earnings(sym)
+            ph = client.history(sym)
+            pe_dist = F.pe_distribution_from_prices(ph, eh)
+            pe_debug += (f" | fallback: earnings_rows="
+                         f"{len(eh) if isinstance(eh, list) else 'n/a'}, "
+                         f"price_rows={len(ph) if isinstance(ph, list) else 'n/a'}, "
+                         f"pe_n={pe_dist.get('n', 0)}")
+        except Exception as e:
+            pe_debug += f" | fallback ERROR: {type(e).__name__}: {e}"
 
     # prediction zones: volatility cone + valuation corridor (both sigma-based)
     closes = df["close"].tolist() if not df.empty else []
@@ -174,6 +180,10 @@ def analyze(client: FMPClient, sym: str, sentiment_provider) -> dict:
     zones = PZ.build_zones(closes, ntm_eps=ntm_eps,
                            pe_median=pe_dist.get("median"),
                            pe_sigma=pe_dist.get("sigma"))
+    corridor_debug = (f"ntm_eps={round(ntm_eps,2) if ntm_eps else None} "
+                      f"({eps_source}) · pe_median={pe_dist.get('median')} · "
+                      f"{pe_debug} · corridor_ok="
+                      f"{zones.get('corridor', {}).get('ok')}")
     if zones.get("corridor", {}).get("ok"):
         zones["corridor"]["eps_source"] = eps_source
         zones["corridor"]["pe_source"] = pe_dist.get("source", "ratios")
@@ -202,6 +212,7 @@ def analyze(client: FMPClient, sym: str, sentiment_provider) -> dict:
         "entry_exit": levels, "naive_forecast": forecast,
         "multiples": multiples, "pe_distribution": pe_dist,
         "zones": zones, "series": series,
+        "corridor_debug": corridor_debug,
         "volume_profile": vp,
     }
     return _clean(_result)
