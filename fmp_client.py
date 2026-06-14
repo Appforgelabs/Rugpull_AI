@@ -5,6 +5,7 @@ FMP serves its primary data through `/stable/` routes now, with `/v3/` and
 `/v1/` kept as legacy fallbacks. Endpoint paths are centralized in ENDPOINTS
 below so that if FMP renames one, you change it in exactly one place.
 
+lonevv
 Set your key via env var:  export FMP_API_KEY="..."
 """
 
