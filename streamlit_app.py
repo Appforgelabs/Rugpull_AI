@@ -576,8 +576,29 @@ with tab_research:
     rk = RS.build_rankings(snaps, macro)
 
     if not rk["ok"]:
-        st.info("No valuation data yet. Hit ⟳ Update all in the sidebar — the "
-                "rankings build from each ticker's corridor fair value.")
+        # diagnose WHY it's empty rather than a generic message
+        n_snaps = len(snaps)
+        n_with_result = sum(1 for v in snaps.values() if v.get("result"))
+        n_with_corr = sum(1 for v in snaps.values()
+                          if ((v.get("result") or {}).get("zones") or {})
+                          .get("corridor", {}).get("ok"))
+        if n_snaps == 0:
+            st.info("No snapshots yet. Hit **⟳ Update all** in the sidebar.")
+        elif n_with_result == 0:
+            st.warning("Your snapshots only have **trading** data (from the "
+                       "Trading tab), not the **analyzer/valuation** data this "
+                       "tab needs. Hit **⟳ Update all** in the sidebar — that "
+                       "fetches the corridor fair values the rankings rank by.")
+        elif n_with_corr == 0:
+            st.warning(f"{n_with_result} ticker(s) have analyzer data, but none "
+                       "have a corridor fair value yet — that needs a positive "
+                       "forward EPS (analyst estimates or the TTM proxy). "
+                       "Unprofitable names won't produce a target. Try adding a "
+                       "profitable ticker, or re-run **⟳ Update all**.")
+        else:
+            st.info("No rankings to show.")
+        st.caption(f"Debug: {n_snaps} snapshots · {n_with_result} with analyzer "
+                   f"data · {n_with_corr} with a corridor target.")
     else:
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Names ranked", rk["n_total"])
@@ -590,12 +611,18 @@ with tab_research:
             st.markdown("**Upside to corridor fair value**")
             chart12 = {r["ticker"]: r["corridor_upside"]
                        for r in rk["by_corridor"][:12]}
-            st.bar_chart(chart12, horizontal=True, height=300)
+            if chart12:
+                st.bar_chart(chart12, horizontal=True, height=300)
+            else:
+                st.caption("No rankable names.")
         with c2:
             st.markdown("**Regime + sentiment-adjusted upside**")
             chartadj = {r["ticker"]: r["adjusted_upside"]
                         for r in rk["by_adjusted"][:12]}
-            st.bar_chart(chartadj, horizontal=True, height=300)
+            if chartadj:
+                st.bar_chart(chartadj, horizontal=True, height=300)
+            else:
+                st.caption("No rankable names.")
 
         st.markdown("**Current price vs corridor fair value**")
         price_cmp = {}
