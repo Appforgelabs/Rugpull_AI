@@ -27,6 +27,67 @@ import macro_engine as ME
 import volume_profile as VP
 
 
+def _pe_dist_from_prices(price_hist, earnings, lookback_days=900):
+    """Historical P/E median+sigma from daily close ÷ trailing-12mo EPS — the
+    same method the corridor chart uses. Inlined here so the corridor fix needs
+    only this one file (no dependency on other files landing in the repo).
+    Handles whatever EPS field name FMP returns (epsActual, eps, etc.)."""
+    import datetime as _dt
+    if isinstance(price_hist, dict) and "historical" in price_hist:
+        price_hist = price_hist["historical"]
+    if not price_hist or not earnings or not isinstance(earnings, list):
+        return {"median": None, "sigma": None, "n": 0, "source": "none"}
+
+    q = []
+    for e in earnings:
+        d = e.get("date")
+        eps = None
+        for k in ("epsActual", "eps", "epsActualReported", "epsdiluted",
+                  "epsActualEstimate", "epsEstimated"):
+            if e.get(k) is not None:
+                try:
+                    eps = float(e[k]); break
+                except (TypeError, ValueError):
+                    pass
+        if d and eps is not None:
+            try:
+                q.append((_dt.date.fromisoformat(str(d)[:10]), eps))
+            except ValueError:
+                pass
+    q.sort()
+    if len(q) < 4:
+        return {"median": None, "sigma": None, "n": 0, "source": "none"}
+
+    def ttm_asof(day):
+        prior = [eps for (dd, eps) in q if dd <= day]
+        return sum(prior[-4:]) if len(prior) >= 4 else None
+
+    cutoff = _dt.date.today() - _dt.timedelta(days=lookback_days)
+    pes = []
+    for row in price_hist:
+        ds, c = row.get("date"), row.get("close")
+        if not ds or c is None:
+            continue
+        try:
+            day = _dt.date.fromisoformat(str(ds)[:10])
+        except ValueError:
+            continue
+        if day < cutoff:
+            continue
+        ttm = ttm_asof(day)
+        if ttm and ttm > 0:
+            pe = float(c) / ttm
+            if 0 < pe < 500:
+                pes.append(pe)
+
+    if len(pes) < 20:
+        return {"median": None, "sigma": None, "n": len(pes), "source": "none"}
+    arr = np.array(pes)
+    return {"median": round(float(np.median(arr)), 2),
+            "sigma": round(float(arr.std(ddof=1)), 2),
+            "n": len(pes), "source": "price/earnings (inline)"}
+
+
 def _clean(o):
     """Recursively cast numpy scalars to native types so results are JSON-safe."""
     if isinstance(o, dict):
@@ -140,11 +201,14 @@ def analyze(client: FMPClient, sym: str, sentiment_provider) -> dict:
     pe_debug = f"ratios:n={pe_dist.get('n', 0)}"
     # Fallback: if the ratios endpoint gave no usable P/E history (common on
     # some FMP plans), compute it from prices ÷ TTM EPS like the corridor chart.
+    # NOTE: we hit /stable/earnings via the client's raw _get() with a hardcoded
+    # path, so this works even if fmp_client.py lacks an `earnings` method or
+    # ENDPOINTS key (avoids depending on a second file landing in the repo).
     if not pe_dist.get("median"):
         try:
-            eh = client.earnings(sym)
+            eh = client._get(f"/stable/earnings?symbol={sym.upper()}&limit=40")
             ph = client.history(sym)
-            pe_dist = F.pe_distribution_from_prices(ph, eh)
+            pe_dist = _pe_dist_from_prices(ph, eh)
             pe_debug += (f" | fallback: earnings_rows="
                          f"{len(eh) if isinstance(eh, list) else 'n/a'}, "
                          f"price_rows={len(ph) if isinstance(ph, list) else 'n/a'}, "
