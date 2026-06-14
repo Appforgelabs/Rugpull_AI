@@ -236,9 +236,9 @@ with st.sidebar:
     st.caption(f"Macro: {macro.get('regime','?')} · tilt ×{macro.get('tilt',1.0)}")
 
 # ---- tabs ------------------------------------------------------------------
-tab_dash, tab1, tab_trade, tab_sc, tab_macro, tab_bt, tab_learn, tab2 = st.tabs(
-    ["⬢ Dashboard", "Analyzer", "Trading", "Scenarios", "Macro", "Backtest",
-     "Learn", "Corridor Chart"])
+tab_dash, tab1, tab_trade, tab_sc, tab_research, tab_macro, tab_bt, tab_learn, tab2 = st.tabs(
+    ["⬢ Dashboard", "Analyzer", "Trading", "Scenarios", "Research", "Macro",
+     "Backtest", "Learn", "Corridor Chart"])
 
 with tab_dash:
     import dashboard as DB
@@ -562,6 +562,64 @@ with tab_trade:
                 st.caption("Trend votes are deduplicated (MA structure is one "
                            "vote, not five). Oscillator stretch is shown above, "
                            "not counted here. " + sg.get("note", ""))
+
+with tab_research:
+    import research_screener as RS
+    st.caption("Upside rankings to corridor fair value (NTM EPS × historical "
+               "P/E), plus a regime + sentiment-adjusted version. Reads stored "
+               "snapshots — run ⟳ Update all to populate. Targets are model "
+               "outputs, not promises.")
+
+    snaps = {s: SS.load_snapshot(s) for s in syms}
+    snaps = {k: v for k, v in snaps.items() if v}
+    macro = (SS.load_macro() or {}).get("macro")
+    rk = RS.build_rankings(snaps, macro)
+
+    if not rk["ok"]:
+        st.info("No valuation data yet. Hit ⟳ Update all in the sidebar — the "
+                "rankings build from each ticker's corridor fair value.")
+    else:
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Names ranked", rk["n_total"])
+        k2.metric("Trading below fair", rk["n_below_fair"])
+        k3.metric("Avg upside", f"{rk['avg_corridor_upside']}%")
+        k4.metric("Regime tilt", f"{rk['regime']} ×{rk['risk_multiplier']}")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Upside to corridor fair value**")
+            chart12 = {r["ticker"]: r["corridor_upside"]
+                       for r in rk["by_corridor"][:12]}
+            st.bar_chart(chart12, horizontal=True, height=300)
+        with c2:
+            st.markdown("**Regime + sentiment-adjusted upside**")
+            chartadj = {r["ticker"]: r["adjusted_upside"]
+                        for r in rk["by_adjusted"][:12]}
+            st.bar_chart(chartadj, horizontal=True, height=300)
+
+        st.markdown("**Current price vs corridor fair value**")
+        price_cmp = {}
+        for r in rk["by_corridor"]:
+            price_cmp[r["ticker"]] = {"Current": r["price"],
+                                      "Fair value": r["fair_value"]}
+        import pandas as _pd
+        st.bar_chart(_pd.DataFrame(price_cmp).T, height=300)
+
+        st.markdown("**Ranking table**")
+        tbl = [{"#": r["rank_corridor"], "Ticker": r["ticker"],
+                "Company": r["company"], "Price": r["price"],
+                "Fair value": r["fair_value"],
+                "Upside %": r["corridor_upside"],
+                "Adj upside %": r["adjusted_upside"],
+                "Sentiment": r["sentiment"], "Composite": r["composite"]}
+               for r in rk["by_corridor"]]
+        st.dataframe(tbl, use_container_width=True, hide_index=True)
+
+        if rk["missing"]:
+            st.caption(f"No corridor target (e.g. negative/again no forward EPS): "
+                       f"{', '.join(rk['missing'])}. These are excluded from "
+                       "rankings rather than given a fabricated target.")
+        st.caption(rk["note"])
 
 with tab_sc:
     import scenario_engine as SE
