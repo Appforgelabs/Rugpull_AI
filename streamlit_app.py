@@ -599,6 +599,12 @@ with tab_research:
             st.info("No rankings to show.")
         st.caption(f"Debug: {n_snaps} snapshots · {n_with_result} with analyzer "
                    f"data · {n_with_corr} with a corridor target.")
+        # show one ticker's corridor diagnosis so we can see WHY it failed
+        with st.expander("🔍 Why no corridor? (per-ticker diagnosis)"):
+            for s, v in list(snaps.items())[:8]:
+                dbg = (v.get("result") or {}).get("corridor_debug", "no debug "
+                       "(re-run Update all after uploading the latest analyze.py)")
+                st.text(f"{s}: {dbg}")
     else:
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Names ranked", rk["n_total"])
