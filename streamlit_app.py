@@ -126,6 +126,48 @@ if not key:
 client = get_client(key)
 syms = [t["symbol"] for t in st.session_state.watchlist]
 
+# ---- 30-min auto-refresh (market hours, tab must stay open) ----------------
+def _market_open_now():
+    """True on weekdays 9:30–16:00 US/Eastern."""
+    import datetime as _dt
+    try:
+        from zoneinfo import ZoneInfo
+        now = _dt.datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        now = _dt.datetime.utcnow() - _dt.timedelta(hours=4)  # rough ET fallback
+    if now.weekday() >= 5:
+        return False, now
+    mins = now.hour * 60 + now.minute
+    return (9 * 60 + 30) <= mins <= (16 * 60), now
+
+if st.session_state.get("auto_refresh_on"):
+    open_now, et_now = _market_open_now()
+    if open_now:
+        try:
+            from streamlit_autorefresh import st_autorefresh
+            st_autorefresh(interval=30 * 60 * 1000, key="mkt_autorefresh")
+        except Exception:
+            # fallback: meta-refresh the page every 30 min (no extra dependency)
+            st.markdown(
+                '<meta http-equiv="refresh" content="1800">',
+                unsafe_allow_html=True)
+        # on each rerun while open, run a data update tick if 30+ min elapsed
+        import time as _t
+        last = st.session_state.get("last_auto_update", 0)
+        if _t.time() - last >= 30 * 60:
+            st.session_state.last_auto_update = _t.time()
+            try:
+                import prediction_tracker as PT
+                for _s in syms:
+                    try:
+                        fetch_and_store(client, _s)
+                    except Exception:
+                        pass
+                fetch_macro(client)
+                PT.auto_cycle(syms, SS.load_snapshot, get_cloud_url())
+            except Exception:
+                pass
+
 # ---- sidebar ---------------------------------------------------------------
 with st.sidebar:
     st.subheader("Watchlist")
@@ -163,8 +205,13 @@ with st.sidebar:
         try:
             import prediction_tracker as PT
             cyc = PT.auto_cycle(syms, SS.load_snapshot, get_cloud_url())
-            st.toast(f"Tracker: +{cyc['recorded']} recorded, "
-                     f"{cyc['scored']} scored, {cyc['pending']} pending")
+            sv = cyc.get("save", {})
+            if sv.get("cloud"):
+                st.toast(f"✓ Ledger saved to cloud: +{cyc['recorded']} recorded, "
+                         f"{cyc['scored']} scored, {cyc['pending']} pending")
+            else:
+                st.toast(f"⚠ LEDGER NOT SAVED TO CLOUD: {sv.get('error')} — "
+                         f"data will be lost on reboot!", icon="⚠️")
         except Exception:
             pass
         st.rerun()
@@ -176,6 +223,21 @@ with st.sidebar:
     cb.download_button("Export", use_container_width=True,
                        data=json.dumps({"watchlist": st.session_state.watchlist}, indent=2),
                        file_name="tickers.json", mime="application/json")
+
+    st.divider()
+    st.session_state.auto_refresh_on = st.toggle(
+        "🔄 Auto-update every 30 min", value=st.session_state.get("auto_refresh_on", False),
+        help="While this tab stays open, re-fetches data every 30 min during "
+             "market hours (9:30–4 ET) and records the prediction ledger. "
+             "Closing the tab stops it — Streamlit Cloud can't run in the "
+             "background.")
+    if st.session_state.auto_refresh_on:
+        _open, _et = _market_open_now()
+        if _open:
+            st.caption(f"🟢 Live · {_et.strftime('%H:%M')} ET · refreshing every 30m")
+        else:
+            st.caption(f"⚪ Idle · {_et.strftime('%H:%M ET, %a')} · market closed "
+                       "(no calls used until 9:30 ET weekdays)")
 
     # ---- cloud sync (cross-computer, via your corridor Apps Script) ----
     st.divider()
@@ -236,9 +298,9 @@ with st.sidebar:
     st.caption(f"Macro: {macro.get('regime','?')} · tilt ×{macro.get('tilt',1.0)}")
 
 # ---- tabs ------------------------------------------------------------------
-tab_dash, tab1, tab_trade, tab_sc, tab_research, tab_macro, tab_bt, tab_learn, tab2 = st.tabs(
-    ["⬢ Dashboard", "Analyzer", "Trading", "Scenarios", "Research", "Macro",
-     "Backtest", "Learn", "Corridor Chart"])
+tab_dash, tab1, tab_trade, tab_sc, tab_research, tab_paper, tab_macro, tab_bt, tab_learn, tab2 = st.tabs(
+    ["⬢ Dashboard", "Analyzer", "Trading", "Scenarios", "Research", "Paper Trade",
+     "Macro", "Backtest", "Learn", "Corridor Chart"])
 
 with tab_dash:
     import dashboard as DB
@@ -697,6 +759,22 @@ with tab_sc:
 
     st.divider()
     st.subheader("Prediction ledger — the app grading itself")
+    # cloud-persistence health: prove the ledger is actually saving to the Sheet
+    _url = get_cloud_url()
+    try:
+        import cloud_sync as CS
+        _conn = CS.test_connection(_url)
+        if _conn["ok"]:
+            st.success(f"☁ Ledger persistence: connected — survives reboots. "
+                       f"({_conn['detail']})")
+        else:
+            st.error(f"☁ Ledger persistence BROKEN: {_conn['status']} — "
+                     f"{_conn['detail']}. Until this is green, ledger data is "
+                     f"LOST on every reboot. Most likely fix: paste the latest "
+                     f"Code.gs into Apps Script and redeploy (it needs the "
+                     f"'saveApp' namespace).")
+    except Exception as e:
+        st.error(f"☁ Ledger persistence check failed: {e}")
     ledger = PT.load_ledger(get_cloud_url())
     preds = ledger.get("predictions", [])
     n_scored = sum(1 for p in preds if p.get("scored"))
@@ -728,6 +806,147 @@ with tab_sc:
                                 if p.get("scored") and "correct" in p else "…"}
                     for p in reversed(preds[-100:])]
             st.dataframe(show, use_container_width=True, hide_index=True)
+
+with tab_paper:
+    import paper_portfolio as PP
+    import research_screener as RS
+    st.caption("Automated 12-ticker equal-weight paper portfolio, driven by the "
+               "Research adjusted-upside ranking. Rebalances weekly (with a "
+               "hysteresis buffer so it doesn't churn on noise). $100k start, "
+               "small modeled commission. Benchmarked vs SPY, dollar-matched. "
+               "Persists to your Sheet. Not advice — a measurement of whether "
+               "the top-ranked basket beats SPY.")
+
+    cloud = get_cloud_url()
+    port = PP.load_portfolio(cloud) or PP.new_portfolio()
+
+    # gather current prices from snapshots (+ SPY)
+    prices = {}
+    for s in list(set(syms + ["SPY"])):
+        snap = SS.load_snapshot(s)
+        px = ((snap or {}).get("trading") or {}).get("price") \
+            or ((snap or {}).get("result") or {}).get("price")
+        if px:
+            prices[s] = px
+
+    # rankings from the research screener (adjusted upside order)
+    snaps = {s: SS.load_snapshot(s) for s in syms}
+    snaps = {k: v for k, v in snaps.items() if v}
+    macro = (SS.load_macro() or {}).get("macro")
+    rk = RS.build_rankings(snaps, macro)
+    ranked = [r["ticker"] for r in rk.get("by_adjusted", [])] if rk.get("ok") else []
+
+    cc1, cc2, cc3 = st.columns([2, 2, 2])
+    auto_paper = cc1.toggle("Auto-rebalance weekly", value=True,
+                            help="When on, rebalances if 7+ days since last and "
+                                 "you run Update / open the tab.")
+    if cc2.button("⟳ Rebalance now", help="Force an immediate rebalance"):
+        if not ranked:
+            st.error("No rankings yet — run ⟳ Update all so Research can rank.")
+        elif not prices:
+            st.error("No prices — run ⟳ Update all.")
+        else:
+            res = PP.rebalance(port, ranked, prices, force=True)
+            PP.snapshot_value(port, prices)
+            sv = PP.save_portfolio(port, cloud)
+            if sv["cloud"]:
+                st.success(f"Rebalanced & saved. Roster: {len(res.get('roster',[]))}")
+            else:
+                st.warning(f"Rebalanced but NOT saved: {sv['error']}")
+            st.rerun()
+    if cc3.button("↺ Reset portfolio", help="Wipe and start fresh at $100k"):
+        port = PP.new_portfolio()
+        PP.save_portfolio(port, cloud)
+        st.rerun()
+
+    # auto-rebalance on tab view if due
+    if auto_paper and ranked and prices:
+        res = PP.rebalance(port, ranked, prices, force=False)
+        if res.get("acted"):
+            PP.snapshot_value(port, prices)
+            PP.save_portfolio(port, cloud)
+            st.info(f"Auto-rebalanced (weekly cadence). Roster: "
+                    f"{len(res.get('roster', []))} names.")
+        else:
+            # still snapshot daily value even when not rebalancing
+            PP.snapshot_value(port, prices)
+            PP.save_portfolio(port, cloud)
+
+    if not port["positions"]:
+        st.info("Portfolio is empty. Click **⟳ Rebalance now** to buy the top 12 "
+                "ranked names (needs ⟳ Update all run first so Research can rank).")
+    else:
+        perf = PP.performance(port, prices)
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Value", f"${perf['value']:,.0f}",
+                  f"{perf['total_return_pct']:+.2f}%")
+        m2.metric("vs SPY", f"{perf['vs_spy']:+.2f}%" if perf['vs_spy'] is not None else "—",
+                  help="Total return minus SPY's, dollar-matched")
+        m3.metric("SPY return", f"{perf['spy_return_pct']:+.2f}%"
+                  if perf['spy_return_pct'] is not None else "—")
+        m4.metric("Positions", perf["positions"])
+        m5.metric("Cash", f"{perf['cash_pct']}%")
+
+        w1, w2, w3, w4 = st.columns(4)
+        w1.metric("7D", f"{perf['ret_7d']:+.2f}%" if perf['ret_7d'] is not None else "—")
+        w2.metric("30D", f"{perf['ret_30d']:+.2f}%" if perf['ret_30d'] is not None else "—")
+        w3.metric("YTD", f"{perf['ret_ytd']:+.2f}%" if perf['ret_ytd'] is not None else "—")
+        w4.metric("1Y", f"{perf['ret_1y']:+.2f}%" if perf['ret_1y'] is not None else "—")
+
+        # performance chart vs SPY
+        if len(port["history"]) >= 2:
+            import pandas as _pd
+            hist = port["history"]
+            window = st.radio("Window", ["7D", "30D", "YTD", "1Y", "Max"],
+                              index=4, horizontal=True)
+            days_map = {"7D": 7, "30D": 30, "YTD": (dt.date.today()
+                        - dt.date(dt.date.today().year, 1, 1)).days,
+                        "1Y": 365, "Max": 99999}
+            cutoff = (dt.date.today()
+                      - dt.timedelta(days=days_map[window])).isoformat()
+            rows = [h for h in hist if h["date"] >= cutoff] or hist
+            base_v = rows[0]["value"] or PP.START_CASH
+            base_s = rows[0].get("spy_value") or base_v
+            chart = {}
+            for h in rows:
+                chart[h["date"]] = {
+                    "Portfolio %": round((h["value"] / base_v - 1) * 100, 2),
+                    "SPY %": round((h["spy_value"] / base_s - 1) * 100, 2)
+                                  if h.get("spy_value") else None}
+            df_c = _pd.DataFrame(chart).T
+            st.line_chart(df_c, height=320)
+            st.caption("Cumulative return, both rebased to 0 at the window start "
+                       "— a fair dollar-matched comparison.")
+        else:
+            st.caption("Performance chart appears once there are 2+ daily "
+                       "snapshots. Keep the app updating.")
+
+        # holdings table
+        st.markdown("**Holdings**")
+        hold_rows = []
+        for sym, pos in sorted(port["positions"].items()):
+            px = prices.get(sym, pos["avg_cost"])
+            mv = pos["shares"] * px
+            ret = (px / pos["avg_cost"] - 1) * 100 if pos["avg_cost"] else 0
+            hold_rows.append({"Ticker": sym, "Shares": round(pos["shares"], 2),
+                              "Avg cost": round(pos["avg_cost"], 2),
+                              "Price": round(px, 2),
+                              "Value": round(mv, 0),
+                              "Return %": round(ret, 2),
+                              "Weight %": round(mv / perf["value"] * 100, 1)})
+        st.dataframe(hold_rows, use_container_width=True, hide_index=True)
+
+        # activity feed
+        st.markdown("**Activity** (most recent first)")
+        act = [{"Date": a["date"], "Action": a["action"], "Ticker": a["symbol"],
+                "Shares": a.get("shares"), "Price": a.get("price"),
+                "Note": a.get("note")} for a in reversed(port["activity"][-60:])]
+        st.dataframe(act, use_container_width=True, hide_index=True)
+        if port.get("last_rebalance"):
+            st.caption(f"Last rebalance: {port['last_rebalance']} · next due after "
+                       f"{port['settings']['rebalance_days']} days. Hold "
+                       f"{PP.N_HOLD} equal-weight; a name is dropped only if it "
+                       f"falls past rank {PP.DROP_RANK} (hysteresis).")
 
 with tab_macro:
     st.caption("The tide under every single-stock move. Leading signals (curve, "

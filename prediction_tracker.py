@@ -44,15 +44,26 @@ def load_ledger(cloud_url: str | None = None) -> dict:
         return {"predictions": [], "stats": {}, "version": 1}
 
 
-def save_ledger(ledger: dict, cloud_url: str | None = None) -> None:
-    LOCAL_PATH.parent.mkdir(exist_ok=True)
-    LOCAL_PATH.write_text(json.dumps(ledger))
+def save_ledger(ledger: dict, cloud_url: str | None = None) -> dict:
+    """Persist the ledger. Returns {local, cloud, error} so the caller can SURFACE
+    a cloud-save failure instead of silently losing data on the next reboot."""
+    status = {"local": False, "cloud": False, "error": None}
+    try:
+        LOCAL_PATH.parent.mkdir(exist_ok=True)
+        LOCAL_PATH.write_text(json.dumps(ledger))
+        status["local"] = True
+    except Exception as e:
+        status["error"] = f"local write failed: {e}"
     if cloud_url:
         try:
             import cloud_sync as CS
             CS.save_blob(cloud_url, LEDGER_KEY, ledger)
-        except Exception:
-            pass
+            status["cloud"] = True
+        except Exception as e:
+            status["error"] = f"CLOUD SAVE FAILED: {e}"
+    else:
+        status["error"] = "no cloud URL — ledger only in local file (LOST on reboot)"
+    return status
 
 
 # ---- record -----------------------------------------------------------------
@@ -167,8 +178,9 @@ def auto_cycle(syms: list[str], load_snapshot, cloud_url: str | None = None) -> 
     n_scored = score_due(ledger, latest)
     n_recorded = sum(1 for s, tr in trading_by_sym.items()
                      if record(ledger, s, tr))
-    save_ledger(ledger, cloud_url)
+    save_status = save_ledger(ledger, cloud_url)
     pend = sum(1 for p in ledger["predictions"] if not p.get("scored"))
     return {"recorded": n_recorded, "scored": n_scored, "pending": pend,
             "total": len(ledger["predictions"]),
-            "weights": signal_weights(ledger)}
+            "weights": signal_weights(ledger),
+            "save": save_status}
