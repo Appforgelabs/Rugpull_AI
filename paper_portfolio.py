@@ -202,15 +202,19 @@ def performance(p, prices: dict) -> dict:
 
 # ---- persistence (same proven path as the watchlist) -----------------------
 def load_portfolio(cloud_url: str | None):
-    if cloud_url:
-        try:
-            import cloud_sync as CS
-            blob = CS.load_blob(cloud_url, PAPER_KEY)
-            if blob and blob.get("version"):
-                return blob
-        except Exception:
-            pass
-    return None
+    """Returns (portfolio_or_None, status). status is 'loaded', 'empty'
+    (cloud reachable but nothing saved), or 'error' (load FAILED — caller must
+    NOT auto-save over the cloud, or it could wipe good data)."""
+    if not cloud_url:
+        return None, "error"
+    try:
+        import cloud_sync as CS
+        blob = CS.load_blob(cloud_url, PAPER_KEY)
+    except Exception:
+        return None, "error"        # transient failure — do NOT overwrite
+    if blob and blob.get("version"):
+        return blob, "loaded"
+    return None, "empty"            # genuinely nothing saved yet
 
 
 def save_portfolio(p, cloud_url: str | None) -> dict:
