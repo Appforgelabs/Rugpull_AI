@@ -69,6 +69,25 @@ def fetch_and_store(client, sym):
     return res
 
 
+def lookup_ticker(client, sym):
+    """On-demand full analysis for ANY ticker (not just watchlist). Stores a
+    snapshot so other tabs/report can use it, and also fetches trading data."""
+    sym = sym.upper().strip()
+    res = fetch_and_store(client, sym)
+    try:
+        import trade_signals as _TS
+        _spy = _TS.to_ohlcv(client.history("SPY"))["close"].tolist()
+    except Exception:
+        _spy = None
+    try:
+        tr = A.build_trading(client, sym, intraday_interval="5min", spy_closes=_spy)
+        if tr.get("ok"):
+            SS.save_trading(sym, tr)
+    except Exception:
+        pass
+    return res
+
+
 def fetch_macro(client):
     """Fetch + store the shared market-regime snapshot."""
     import macro_engine as ME
@@ -126,6 +145,32 @@ if not key:
     st.stop()
 client = get_client(key)
 syms = [t["symbol"] for t in st.session_state.watchlist]
+
+# ---- search bar (any ticker on demand + watchlist filter) ------------------
+with st.expander("🔎 Search — look up any ticker or filter your watchlist", expanded=False):
+    sb1, sb2 = st.columns([3, 2])
+    with sb1:
+        look = st.text_input("Look up any ticker (analyzes on demand)",
+                             placeholder="e.g. PLTR, COIN, SHOP",
+                             key="search_lookup").upper().strip()
+        if st.button("Analyze ticker", key="do_lookup") and look:
+            with st.spinner(f"Analyzing {look}…"):
+                try:
+                    lookup_ticker(client, look)
+                    st.session_state.last_lookup = look
+                    if look not in syms:
+                        st.caption(f"✓ {look} analyzed (not added to watchlist — "
+                                   "use the sidebar to add it permanently). Open "
+                                   "the **Report** tab to see the full write-up.")
+                    st.success(f"{look} ready — see Analyzer or Report tab.")
+                except Exception as e:
+                    st.error(f"Couldn't analyze {look}: {e}")
+    with sb2:
+        filt = st.text_input("Filter watchlist", placeholder="type to filter…",
+                             key="search_filter").upper().strip()
+        if filt:
+            hits = [s for s in syms if filt in s]
+            st.caption(f"{len(hits)} match: {', '.join(hits) if hits else '—'}")
 
 # ---- sidebar ---------------------------------------------------------------
 with st.sidebar:
@@ -242,9 +287,9 @@ with st.sidebar:
     st.caption(f"Macro: {macro.get('regime','?')} · tilt ×{macro.get('tilt',1.0)}")
 
 # ---- tabs ------------------------------------------------------------------
-tab_dash, tab1, tab_trade, tab_sc, tab_research, tab_paper, tab_macro, tab_bt, tab_learn, tab2 = st.tabs(
+tab_dash, tab1, tab_trade, tab_sc, tab_research, tab_paper, tab_report, tab_macro, tab_bt, tab_learn, tab2 = st.tabs(
     ["⬢ Dashboard", "Analyzer", "Trading", "Scenarios", "Research", "Paper Trade",
-     "Macro", "Backtest", "Learn", "Corridor Chart"])
+     "Report", "Macro", "Backtest", "Learn", "Corridor Chart"])
 
 with tab_dash:
     import dashboard as DB
@@ -923,6 +968,95 @@ with tab_paper:
                        f"{port['settings']['rebalance_days']} days. Hold "
                        f"{PP.N_HOLD} equal-weight; a name is dropped only if it "
                        f"falls past rank {PP.DROP_RANK} (hysteresis).")
+
+with tab_report:
+    import report_engine as RE
+    st.caption("Generate a full deep-dive report on any analyzed ticker, or scan "
+               "your watchlist for long/short setups. Reports are research "
+               "write-ups, not trade calls — signals are mostly lagging and "
+               "haven't reliably beaten buy-and-hold.")
+
+    macro = (SS.load_macro() or {}).get("macro")
+    mode = st.radio("Mode", ["📄 Deep-dive report (one ticker)",
+                             "🔍 Scan for trading ideas (watchlist)"],
+                    horizontal=True)
+
+    if mode.startswith("📄"):
+        # any ticker that has a snapshot (watchlist OR searched)
+        avail = sorted(set(syms + ([st.session_state.get("last_lookup")]
+                                   if st.session_state.get("last_lookup") else [])))
+        # also include any symbol that has a stored snapshot
+        pick = st.selectbox("Ticker (must be analyzed first — use 🔎 Search "
+                            "above for non-watchlist names)", avail)
+        snap = SS.load_snapshot(pick) if pick else None
+        if not snap or not (snap.get("result") or snap.get("trading")):
+            st.info(f"No analysis stored for {pick}. Run ⟳ Update all, or use "
+                    "🔎 Search at the top to analyze it on demand.")
+        else:
+            d = RE.deep_dive(snap, macro)
+            md = RE.deep_dive_markdown(d)
+            html = RE.deep_dive_html(d)
+            dl1, dl2 = st.columns(2)
+            dl1.download_button("⬇ Download HTML", data=html,
+                                file_name=f"{d['symbol']}_report.html",
+                                mime="text/html", use_container_width=True)
+            dl2.download_button("⬇ Download Markdown", data=md,
+                                file_name=f"{d['symbol']}_report.md",
+                                mime="text/markdown", use_container_width=True)
+            st.markdown("---")
+            st.markdown(md)
+
+    else:
+        f1, f2, f3 = st.columns(3)
+        direction = f1.selectbox("Direction", ["both", "long", "short"])
+        timeframe = f2.selectbox("Timeframe", ["swing", "day"])
+        min_conv = f3.slider("Min conviction %", 50, 72, 50)
+        g1, g2 = st.columns(2)
+        prof_only = g1.checkbox("Only higher-quality names (composite ≥45)")
+        min_up = g2.number_input("Min corridor upside % (longs)", value=0,
+                                 step=5) or None
+
+        snaps = {s: SS.load_snapshot(s) for s in syms}
+        snaps = {k: v for k, v in snaps.items() if v}
+        scan = RE.scan_ideas(snaps, macro, direction=direction,
+                             timeframe=timeframe, min_conviction=min_conv,
+                             profitable_only=prof_only, min_upside=min_up)
+
+        smd = RE.scan_markdown(scan)
+        st.download_button("⬇ Download scan (Markdown)", data=smd,
+                           file_name=f"trading_ideas_{timeframe}.md",
+                           mime="text/markdown")
+
+        st.info(scan["note"])
+        if "longs" in scan:
+            st.markdown(f"### 🟢 LONG candidates ({len(scan['longs'])})")
+            if scan["longs"]:
+                st.dataframe([{"Ticker": r["symbol"], "Price": r.get("price"),
+                               "Conv %": r["conviction"], "ADX": r.get("adx"),
+                               "Upside %": r.get("upside"),
+                               "Supertrend": r["supertrend"],
+                               "RS vs SPY": r.get("rel_strength"),
+                               "Composite": r.get("composite")}
+                              for r in scan["longs"]],
+                             use_container_width=True, hide_index=True)
+                for r in scan["longs"][:6]:
+                    st.caption(f"**{r['symbol']}** — " + " · ".join(r["reasons"]))
+            else:
+                st.caption("None currently match these filters.")
+        if "shorts" in scan:
+            st.markdown(f"### 🔴 SHORT candidates ({len(scan['shorts'])})")
+            if scan["shorts"]:
+                st.dataframe([{"Ticker": r["symbol"], "Price": r.get("price"),
+                               "Conv %": r["conviction"], "ADX": r.get("adx"),
+                               "Upside %": r.get("upside"),
+                               "Supertrend": r["supertrend"],
+                               "RS vs SPY": r.get("rel_strength")}
+                              for r in scan["shorts"]],
+                             use_container_width=True, hide_index=True)
+                for r in scan["shorts"][:6]:
+                    st.caption(f"**{r['symbol']}** — " + " · ".join(r["reasons"]))
+            else:
+                st.caption("None currently match these filters.")
 
 with tab_macro:
     st.caption("The tide under every single-stock move. Leading signals (curve, "
