@@ -127,38 +127,6 @@ if not key:
 client = get_client(key)
 syms = [t["symbol"] for t in st.session_state.watchlist]
 
-# ---- 10-min LIVE PRICE refresh (market hours, tab must stay open) ----------
-# Lightweight: pulls only batched quotes (+ sparklines), NOT full analysis.
-import live_prices as LV
-
-def _market_open_now():
-    return LV.market_open_now()
-
-if st.session_state.get("live_on"):
-    open_now, et_now = _market_open_now()
-    if open_now:
-        try:
-            from streamlit_autorefresh import st_autorefresh
-            st_autorefresh(interval=LV.REFRESH_SECONDS * 1000, key="live_autorefresh")
-        except Exception:
-            st.markdown(f'<meta http-equiv="refresh" content="{LV.REFRESH_SECONDS}">',
-                        unsafe_allow_html=True)
-        import time as _t
-        last = st.session_state.get("last_live", 0)
-        if _t.time() - last >= LV.REFRESH_SECONDS:
-            st.session_state.last_live = _t.time()
-            try:
-                q = LV.fetch_quotes(client, list(set(syms + ["SPY"])))
-                st.session_state.live_quotes = q
-                st.session_state.live_quotes_at = _t.time()
-                # sparklines for the watchlist (skip SPY to save a call)
-                spk = {}
-                for _s in syms:
-                    spk[_s] = LV.fetch_sparkline(client, _s)
-                st.session_state.live_sparks = spk
-            except Exception:
-                pass
-
 # ---- sidebar ---------------------------------------------------------------
 with st.sidebar:
     st.subheader("Watchlist")
@@ -214,29 +182,6 @@ with st.sidebar:
     cb.download_button("Export", use_container_width=True,
                        data=json.dumps({"watchlist": st.session_state.watchlist}, indent=2),
                        file_name="tickers.json", mime="application/json")
-
-    st.divider()
-    st.session_state.live_on = st.toggle(
-        "📡 Live prices (every 10 min)", value=st.session_state.get("live_on", False),
-        help="While this tab stays open, pulls live prices + intraday sparklines "
-             "every 10 min during market hours (9:30–4 ET) and shows them as a "
-             "strip on the Dashboard. Lightweight — does NOT recompute signals/"
-             "valuations (use the Update buttons for that). Closing the tab "
-             "stops it — Streamlit Cloud can't run in the background.")
-    if st.session_state.live_on:
-        _open, _et = _market_open_now()
-        if _open:
-            _last = st.session_state.get("last_live", 0)
-            if _last:
-                import time as _tt
-                _ago = int((_tt.time() - _last) / 60)
-                st.caption(f"🟢 LIVE · {_et.strftime('%H:%M')} ET · prices "
-                           f"{_ago}m ago · refresh ≤10m")
-            else:
-                st.caption(f"🟢 LIVE · {_et.strftime('%H:%M')} ET · fetching…")
-        else:
-            st.caption(f"⚪ Idle · {_et.strftime('%H:%M ET, %a')} · market closed "
-                       "(no live calls until 9:30 ET weekdays)")
 
     # ---- cloud sync (cross-computer, via your corridor Apps Script) ----
     st.divider()
@@ -305,51 +250,6 @@ with tab_dash:
     import dashboard as DB
     import macro_engine as ME
     import datetime as _dt
-    import live_prices as LV
-
-    # ---- live price strip (populated by the 10-min loop when LIVE is on) ----
-    lq = st.session_state.get("live_quotes") or {}
-    if st.session_state.get("live_on") and lq:
-        _open, _et = LV.market_open_now()
-        _at = st.session_state.get("live_quotes_at", 0)
-        import time as _tt
-        _ago = int((_tt.time() - _at) / 60) if _at else None
-        dot = "🟢" if _open else "⚪"
-        st.markdown(
-            f"<div style='font-family:ui-monospace,monospace;font-size:11px;"
-            f"letter-spacing:.1em;color:#8899aa;margin-bottom:6px'>{dot} LIVE "
-            f"PRICES · {_et.strftime('%H:%M')} ET"
-            + (f" · {_ago}m ago" if _ago is not None else "")
-            + ("" if _open else " · market closed (last known)") + "</div>",
-            unsafe_allow_html=True)
-        sparks = st.session_state.get("live_sparks") or {}
-        strip = [s for s in syms if s in lq][:12]
-        cols = st.columns(len(strip)) if strip else []
-        for i, s in enumerate(strip):
-            q = lq[s]
-            chg = q.get("changePct")
-            color = ("#3fb37f" if (chg or 0) > 0 else
-                     "#d6504f" if (chg or 0) < 0 else "#8899aa")
-            arrow = "▲" if (chg or 0) > 0 else "▼" if (chg or 0) < 0 else "·"
-            spark = LV.spark_svg(sparks.get(s, []))
-            with cols[i]:
-                st.markdown(
-                    f"<div style='font-family:ui-monospace,monospace;"
-                    f"border:1px solid #1d242c;border-radius:4px;padding:6px 8px'>"
-                    f"<div style='font-weight:700;font-size:13px'>{s}</div>"
-                    f"<div style='font-size:13px'>${q.get('price','—')}</div>"
-                    f"<div style='font-size:11px;color:{color}'>{arrow} "
-                    f"{chg:+.2f}%</div>{spark}</div>" if chg is not None else
-                    f"<div style='font-family:ui-monospace,monospace;"
-                    f"border:1px solid #1d242c;border-radius:4px;padding:6px 8px'>"
-                    f"<div style='font-weight:700;font-size:13px'>{s}</div>"
-                    f"<div style='font-size:13px'>${q.get('price','—')}</div>"
-                    f"{spark}</div>",
-                    unsafe_allow_html=True)
-        st.divider()
-    elif st.session_state.get("live_on"):
-        st.caption("📡 Live prices ON — first fetch within 10 min (or outside "
-                   "market hours).")
 
     macro_snap = SS.load_macro()
     macro = (macro_snap or {}).get("macro")
@@ -862,19 +762,26 @@ with tab_paper:
                "the top-ranked basket beats SPY.")
 
     cloud = get_cloud_url()
-    port, load_status = PP.load_portfolio(cloud)
+    try:
+        port, load_status = PP.load_portfolio(cloud)
+        load_err = None
+    except Exception as e:
+        port, load_status, load_err = None, "error", f"{type(e).__name__}: {e}"
+
     if load_status == "error":
-        # load FAILED (transient/network) — do NOT create+save a blank one or we
-        # could overwrite good cloud data. Show the problem, halt the tab.
-        st.error("⚠ Couldn't load the paper portfolio from the cloud right now "
-                 "(network/proxy hiccup). **Not showing or saving anything** so "
-                 "your saved data isn't overwritten. Try the 🔌 Test connection "
-                 "button in the sidebar, or reload in a moment. If you're on a "
-                 "corporate network, a VPN/proxy may be blocking the Apps Script.")
-        st.stop()
-    if port is None:                      # genuinely empty (first run)
-        port = PP.new_portfolio()
-    safe_to_save = (load_status in ("loaded", "empty"))
+        # Couldn't confirm a load. Show WHY, and offer to proceed — but default
+        # to NOT auto-saving so we can't overwrite good cloud data on a hiccup.
+        st.warning("⚠ Couldn't confirm the paper portfolio loaded from the "
+                   "cloud. Not auto-saving (so saved data isn't overwritten). "
+                   f"Reason: `{load_err or 'cloud read returned error'}`")
+        # let the user still see/use the tab with whatever we have
+        if port is None:
+            port = PP.new_portfolio()
+        safe_to_save = False
+    else:
+        if port is None:                  # genuinely empty (first run)
+            port = PP.new_portfolio()
+        safe_to_save = True
 
     # gather current prices from snapshots (+ SPY)
     prices = {}
