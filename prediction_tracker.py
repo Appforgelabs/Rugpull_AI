@@ -25,6 +25,8 @@ LEDGER_KEY = "predictions"
 LOCAL_PATH = Path(__file__).parent / "snapshots" / "_predictions.json"
 HORIZON_DAYS = 7            # calendar days ≈ 5 trading days
 MIN_N_FOR_WEIGHT = 8        # don't trust a hit-rate until this many scored calls
+MAX_SCORED_KEEP = 300       # scored calls kept for audit; stats aggregate forever
+CHUNK = 120                 # predictions per cloud chunk (Sheet cell cap is 50k chars)
 WEIGHT_FLOOR, WEIGHT_CEIL = 0.25, 1.75
 
 
@@ -34,6 +36,14 @@ def load_ledger(cloud_url: str | None = None) -> dict:
         try:
             import cloud_sync as CS
             blob = CS.load_blob(cloud_url, LEDGER_KEY)
+            if blob and blob.get("sharded"):
+                preds = []
+                for i in range(1, int(blob.get("n_chunks", 0)) + 1):
+                    c = CS.load_blob(cloud_url, f"{LEDGER_KEY}_c{i}") or {}
+                    preds.extend(c.get("chunk", []))
+                blob = {k: v for k, v in blob.items()
+                        if k not in ("sharded", "n_chunks")}
+                blob["predictions"] = preds
             if blob:
                 return blob
         except Exception:
@@ -44,9 +54,28 @@ def load_ledger(cloud_url: str | None = None) -> dict:
         return {"predictions": [], "stats": {}, "version": 1}
 
 
+def _trim(ledger: dict) -> None:
+    """Keep the ledger bounded. Per-signal STATS aggregate forever (that's the
+    learning); individual scored calls are audit trail — keep the last
+    MAX_SCORED_KEEP and strip their vote details (already absorbed into stats)."""
+    preds = ledger.get("predictions", [])
+    for p in preds:
+        if p.get("scored") and "votes" in p:
+            del p["votes"]
+    scored = [p for p in preds if p.get("scored")]
+    unscored = [p for p in preds if not p.get("scored")]
+    if len(scored) > MAX_SCORED_KEEP:
+        scored.sort(key=lambda p: p.get("ts", 0))
+        scored = scored[-MAX_SCORED_KEEP:]
+    merged = unscored + scored
+    merged.sort(key=lambda p: p.get("ts", 0))
+    ledger["predictions"] = merged
+
+
 def save_ledger(ledger: dict, cloud_url: str | None = None) -> dict:
     """Persist the ledger. Returns {local, cloud, error} so the caller can SURFACE
     a cloud-save failure instead of silently losing data on the next reboot."""
+    _trim(ledger)
     status = {"local": False, "cloud": False, "error": None}
     try:
         LOCAL_PATH.parent.mkdir(exist_ok=True)
@@ -57,7 +86,21 @@ def save_ledger(ledger: dict, cloud_url: str | None = None) -> dict:
     if cloud_url:
         try:
             import cloud_sync as CS
-            CS.save_blob(cloud_url, LEDGER_KEY, ledger)
+            blob = json.dumps(ledger)
+            if len(blob) <= 45000:
+                # fits in one cell — simple single-blob save
+                CS.save_blob(cloud_url, LEDGER_KEY, ledger)
+            else:
+                # shard: chunks first, meta (with chunk count) last, so a
+                # partial failure never leaves meta pointing at missing chunks
+                preds = ledger.get("predictions", [])
+                chunks = [preds[i:i + CHUNK] for i in range(0, len(preds), CHUNK)]
+                meta = {k: v for k, v in ledger.items() if k != "predictions"}
+                meta["sharded"] = True
+                meta["n_chunks"] = len(chunks)
+                for i, ch in enumerate(chunks, 1):
+                    CS.save_blob(cloud_url, f"{LEDGER_KEY}_c{i}", {"chunk": ch})
+                CS.save_blob(cloud_url, LEDGER_KEY, meta)
             status["cloud"] = True
         except Exception as e:
             status["error"] = f"CLOUD SAVE FAILED: {e}"

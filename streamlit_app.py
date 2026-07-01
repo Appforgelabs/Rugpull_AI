@@ -218,6 +218,25 @@ with st.sidebar:
                          f"data will be lost on reboot!", icon="⚠️")
         except Exception:
             pass
+        # daily paper-portfolio mark-to-market with the fresh prices, so the
+        # performance chart stays continuous even if the Paper tab isn't opened.
+        # Only when the cloud load SUCCEEDED (never save over data we couldn't read).
+        try:
+            import paper_portfolio as PP
+            _pp, _pst = PP.load_portfolio(get_cloud_url())
+            if _pst == "loaded" and _pp.get("positions"):
+                _ppx = {}
+                for _s in set(syms + ["SPY"]):
+                    _sn = SS.load_snapshot(_s)
+                    _px = (((_sn or {}).get("trading") or {}).get("price")
+                           or ((_sn or {}).get("result") or {}).get("price"))
+                    if _px:
+                        _ppx[_s] = _px
+                if _ppx:
+                    PP.snapshot_value(_pp, _ppx)
+                    PP.save_portfolio(_pp, get_cloud_url())
+        except Exception:
+            pass
         st.rerun()
 
     ca, cb = st.columns(2)
@@ -868,16 +887,20 @@ with tab_paper:
         st.rerun()
 
     # auto-rebalance on tab view if due (only if we safely loaded — never save
-    # over good cloud data after a failed load)
+    # over good cloud data after a failed load). Cloud writes are GATED: only
+    # when a rebalance acted or on the first view of the day — not on every
+    # widget interaction (each save is an Apps Script POST).
     if auto_paper and ranked and prices and safe_to_save:
         res = PP.rebalance(port, ranked, prices, force=False)
+        _today = dt.date.today().isoformat()
+        _have_today = any(h["date"] == _today for h in port["history"])
         if res.get("acted"):
             PP.snapshot_value(port, prices)
             PP.save_portfolio(port, cloud)
             st.info(f"Auto-rebalanced (weekly cadence). Roster: "
                     f"{len(res.get('roster', []))} names.")
-        else:
-            # still snapshot daily value even when not rebalancing
+        elif not _have_today:
+            # first view today — record the daily mark-to-market once
             PP.snapshot_value(port, prices)
             PP.save_portfolio(port, cloud)
 

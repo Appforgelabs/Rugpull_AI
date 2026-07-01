@@ -48,9 +48,6 @@ def scan_ideas(snaps: dict, macro: dict | None, *, direction="both",
 
         # quality / upside filters
         composite = (result or {}).get("composite_score")
-        if profitable_only and (composite is None or composite < 50):
-            # composite < 50 is a rough proxy; unprofitable names usually land low
-            pass  # soft filter — don't hard-drop, just note. Hard filter below if set.
 
         corr = _corr(result)
         upside = None
