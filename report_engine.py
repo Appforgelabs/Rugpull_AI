@@ -29,11 +29,31 @@ def _corr(result):
 
 
 def scan_ideas(snaps: dict, macro: dict | None, *, direction="both",
-               timeframe="swing", min_conviction=0, profitable_only=False,
-               min_upside=None) -> dict:
-    """Screen snapshots for long/short setups. Returns ranked candidate lists."""
+               timeframe="swing", min_score=0, profitable_only=False,
+               min_upside=None, ledger_stats: dict | None = None) -> dict:
+    """Screen snapshots for long/short setups, ranked by SETUP QUALITY.
+
+    Design: the trend bias is only the GATE (it's lagging — it decides who's
+    eligible, not who ranks first). The score is built from evidence with some
+    forward information content:
+      leading-ish : relative strength vs SPY, corridor valuation gap, news
+                    sentiment, regime alignment, bootstrap P(up) from the
+                    ticker's own return distribution
+      positioning : distance to volume shelves (entry quality, not prediction)
+      timing      : mean-reversion stretch (rewards pullback-in-trend,
+                    penalizes chasing an extended move)
+      measured    : the prediction ledger's realized hit-rates — the app's own
+                    empirical record, the only factor that's actually validated
+    Nothing here makes markets predictable; the ledger is the honest test."""
     regime = (macro or {}).get("regime", "—")
+    mult = (macro or {}).get("risk_multiplier", 1.0)
+    stats = ledger_stats or {}
     longs, shorts = [], []
+
+    def _hit(name):
+        s = stats.get(name) or {}
+        n = s.get("n", 0)
+        return (s.get("hits", 0) / n) if n >= 8 else None
 
     for sym, snap in snaps.items():
         result = (snap or {}).get("result")
@@ -43,10 +63,11 @@ def scan_ideas(snaps: dict, macro: dict | None, *, direction="both",
         sg = trading.get("signal") or {}
         lane = (sg.get(timeframe) or {})
         bias = lane.get("bias")
-        conv = sg.get("probability", 50) or 50
+        if bias not in ("LONG", "SHORT"):
+            continue
+        side = 1 if bias == "LONG" else -1
         price = trading.get("price")
-
-        # quality / upside filters
+        conv = sg.get("probability", 50) or 50
         composite = (result or {}).get("composite_score")
 
         corr = _corr(result)
@@ -54,64 +75,133 @@ def scan_ideas(snaps: dict, macro: dict | None, *, direction="both",
         if corr.get("ok") and corr.get("fair") and price:
             upside = round((corr["fair"] - price) / price * 100, 1)
 
-        # supporting evidence
-        st = (trading.get("supertrend") or {})
+        stx = (trading.get("supertrend") or {})
         vp = trading.get("vp") or {}
         adx = sg.get("adx")
-        rs = (trading.get("rel_strength") or {})
+        rs = (trading.get("rel_strength") or {}).get("rs_vs_spy")
+        sent = ((result or {}).get("sentiment") or {}).get("score")
+        atr = trading.get("atr14")
+        stretch = ((sg.get("meanrev") or {}).get("stretch"))
+
+        ev = []   # (factor, pts, tag, note)
+
+        # relative strength (leading-ish)
+        if rs is not None:
+            pts = max(-10.0, min(15.0, side * rs * 0.75))
+            ev.append(("Rel strength vs SPY", round(pts, 1), "leading",
+                       f"{rs:+.1f}% over 63d"))
+
+        # corridor valuation gap (leading)
+        if upside is not None:
+            pts = max(-10.0, min(15.0, side * upside * 0.3))
+            ev.append(("Corridor gap", round(pts, 1), "leading",
+                       f"{upside:+.0f}% to fair value"))
+
+        # bootstrap P(up) from the ticker's own return history (probabilistic)
+        p_up = None
+        series = (result or {}).get("series") or (snap or {}).get("prices") or []
+        closes = [p.get("c") for p in series if p.get("c")]
+        if len(closes) >= 80:
+            try:
+                import scenario_engine as SE
+                sim = SE.simulate(closes, horizon=21, n_paths=200, seed=7)
+                if sim.get("ok"):
+                    p_up = sim["prob_above_spot"]
+                    pts = max(-12.0, min(12.0, side * (p_up - 50) * 0.6))
+                    ev.append(("Bootstrap P(up 21d)", round(pts, 1), "leading",
+                               f"{p_up:.0f}% of simulated paths end up"))
+            except Exception:
+                pass
+
+        # news sentiment (leading-ish)
+        if sent is not None:
+            pts = max(-8.0, min(8.0, side * (sent - 50) / 50 * 8))
+            ev.append(("News sentiment", round(pts, 1), "leading",
+                       f"{sent:.0f}/100"))
+
+        # regime alignment (context)
+        pts = (6.0 if mult > 1 else -8.0 if mult < 1 else 0.0) * side
+        if pts:
+            ev.append(("Regime alignment", round(pts, 1), "leading",
+                       f"{regime} ×{mult}"))
+
+        # volume shelf positioning (entry quality, not prediction)
+        if atr and price:
+            if side > 0 and vp.get("support"):
+                d = (price - vp["support"]) / atr
+                if 0 <= d <= 2:
+                    ev.append(("On support shelf", 12.0, "positioning",
+                               f"{d:.1f} ATR above shelf {vp['support']}"))
+            if side < 0 and vp.get("resistance"):
+                d = (vp["resistance"] - price) / atr
+                if 0 <= d <= 2:
+                    ev.append(("Under overhead shelf", 12.0, "positioning",
+                               f"{d:.1f} ATR below shelf {vp['resistance']}"))
+        op = vp.get("overhead_pct")
+        if op is not None:
+            if side > 0 and op < 25:
+                ev.append(("Light overhead supply", 6.0, "positioning", f"{op}% above"))
+            if side < 0 and op > 50:
+                ev.append(("Heavy overhead supply", 6.0, "positioning", f"{op}% above"))
+
+        # mean-reversion timing: reward pullback-in-trend, penalize chasing
+        if stretch is not None:
+            if side * stretch <= -0.8:
+                ev.append(("Pullback entry", 8.0, "timing",
+                           f"stretch {stretch:+.2f} against bias"))
+            elif side * stretch >= 1.5:
+                ev.append(("Chasing extended move", -8.0, "timing",
+                           f"stretch {stretch:+.2f} with bias"))
+
+        # the app's own MEASURED record (prediction ledger hit-rates)
+        hr = _hit(timeframe.upper()) or _hit("OVERALL")
+        if hr is not None:
+            pts = max(-10.0, min(10.0, (hr - 0.5) * 80))
+            ev.append(("Measured hit-rate", round(pts, 1), "measured",
+                       f"{hr*100:.0f}% on scored calls"))
+
+        # trend strength — small, and honestly tagged lagging
+        if adx and adx >= 25:
+            ev.append(("Strong trend (ADX)", 4.0, "lagging", f"ADX {adx:.0f}"))
+
+        setup_score = round(max(0, min(100, 50 + sum(p for _, p, _, _ in ev))))
 
         row = {
             "symbol": sym, "price": price, "bias": bias,
-            "conviction": conv, "adx": adx,
-            "upside": upside, "composite": composite,
-            "supertrend": "up" if st.get("dir", 0) > 0 else "down" if st.get("dir", 0) < 0 else "—",
-            "rel_strength": rs.get("rs_vs_spy"),
+            "setup_score": setup_score, "conviction": conv, "adx": adx,
+            "upside": upside, "composite": composite, "p_up": p_up,
+            "supertrend": "up" if stx.get("dir", 0) > 0 else "down" if stx.get("dir", 0) < 0 else "—",
+            "rel_strength": rs,
             "support_shelf": vp.get("support"), "overhead_shelf": vp.get("resistance"),
-            "reasons": _reasons(sg, lane, st, corr, price, upside, rs, "long" if bias == "LONG" else "short"),
+            "evidence": [{"factor": f, "pts": p, "tag": t, "note": n}
+                         for f, p, t, n in ev],
         }
 
-        if conv < min_conviction:
+        if setup_score < min_score:
             continue
         if min_upside is not None and bias == "LONG" and (upside is None or upside < min_upside):
             continue
         if profitable_only and (composite is None or composite < 45):
             continue
 
-        if bias == "LONG":
-            longs.append(row)
-        elif bias == "SHORT":
-            shorts.append(row)
+        (longs if bias == "LONG" else shorts).append(row)
 
-    longs.sort(key=lambda r: (r["conviction"], r["upside"] or -999), reverse=True)
-    shorts.sort(key=lambda r: r["conviction"], reverse=True)
+    longs.sort(key=lambda r: r["setup_score"], reverse=True)
+    shorts.sort(key=lambda r: r["setup_score"], reverse=True)
 
     out = {"regime": regime, "timeframe": timeframe,
            "generated": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
-           "note": "These are names matching a long/short SETUP right now — "
-                   "candidates to investigate, NOT endorsed trades. Signals are "
-                   "mostly lagging and have not reliably beaten buy-and-hold in "
-                   "backtests. Position sizing and your own diligence matter more "
-                   "than any signal here."}
+           "note": "Ranked by setup quality: trend is only the gate (lagging); "
+                   "the score favors leading evidence (RS, valuation gap, "
+                   "bootstrap odds, sentiment, regime), entry positioning "
+                   "(volume shelves, pullback vs chase) and the ledger's "
+                   "MEASURED hit-rates. Candidates to investigate — not "
+                   "endorsed trades, and not predictions."}
     if direction in ("both", "long"):
         out["longs"] = longs
     if direction in ("both", "short"):
         out["shorts"] = shorts
     return out
-
-
-def _reasons(sg, lane, st, corr, price, upside, rs, side) -> list:
-    r = []
-    if lane.get("bias") in ("LONG", "SHORT"):
-        r.append(f"{lane['basis']} → {lane['bias']} ({lane.get('score')}/{lane.get('max')})")
-    if sg.get("adx") and sg["adx"] >= 25:
-        r.append(f"strong trend (ADX {sg['adx']})")
-    if st.get("dir"):
-        r.append(f"Supertrend {'up' if st['dir']>0 else 'down'}")
-    if upside is not None:
-        r.append(f"corridor {'upside' if upside>0 else 'downside'} {upside:+.0f}%")
-    if rs.get("rs_vs_spy") is not None:
-        r.append(f"RS vs SPY {rs['rs_vs_spy']:+.1f}% ({'leading' if rs['rs_vs_spy']>0 else 'lagging'})")
-    return r
 
 
 # ---------- deep dive --------------------------------------------------------
@@ -301,15 +391,17 @@ def scan_markdown(scan: dict) -> str:
         if not rows:
             L.append("_None currently match._\n")
             continue
-        L.append("| Ticker | Price | Conv % | ADX | Upside | Supertrend | RS vs SPY |")
+        L.append("| Ticker | Setup | Price | P(up 21d) | Upside | RS vs SPY | Conv % |")
         L.append("|---|---|---|---|---|---|---|")
         for r in rows:
-            L.append(f"| {r['symbol']} | {r.get('price','—')} | {r['conviction']} | "
-                     f"{r.get('adx','—')} | {r.get('upside','—')} | {r['supertrend']} | "
-                     f"{r.get('rel_strength','—')} |")
+            L.append(f"| {r['symbol']} | {r['setup_score']} | {r.get('price','—')} | "
+                     f"{r.get('p_up','—')} | {r.get('upside','—')} | "
+                     f"{r.get('rel_strength','—')} | {r['conviction']} |")
         L.append("")
         for r in rows[:8]:
-            L.append(f"**{r['symbol']}** — " + "; ".join(r["reasons"]))
+            evs = "; ".join(f"{e['factor']} {e['pts']:+.0f} [{e['tag']}]"
+                            for e in r["evidence"])
+            L.append(f"**{r['symbol']}** (setup {r['setup_score']}) — {evs}")
         L.append("")
     return "\n".join(L)
 
