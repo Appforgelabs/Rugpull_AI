@@ -620,6 +620,22 @@ if tab_trade is not None:
             # headline long/short table
             def _arrow(d):
                 return {"LONG": "🟢 LONG", "SHORT": "🔴 SHORT", "NEUTRAL": "⚪ NEUTRAL"}.get(d, d)
+            def _td_cell(r):
+                td = r.get("demark") or {}
+                if not td.get("ok"):
+                    return "—"
+                cd = td.get("countdown") or {}
+                if cd.get("count", 0) >= 11:
+                    return f"{cd['side'][0]}·CD {cd['count']}/13"
+                rec = [x for x in (td.get("recent_setups") or [])
+                       if x.get("bars_ago", 99) <= 9]
+                if rec:
+                    x = rec[-1]
+                    return f"{x['side']} 9 ({x['bars_ago']}b)"
+                if td.get("setup_count"):
+                    return f"{td['setup_side'][0]} {td['setup_count']}/9"
+                return "—"
+
             head = []
             for r in trows:
                 sg = r.get("signal", {})
@@ -628,6 +644,7 @@ if tab_trade is not None:
                     "Bias": _arrow(sg.get("direction")),
                     "Prob %": sg.get("probability"),
                     "ADX": sg.get("adx"), "Trend": sg.get("trend_strength"),
+                    "TD": _td_cell(r),
                     "RSI 1d": r.get("rsi_1d"), "RSI D": r.get("rsi_D"),
                     "RSI W": r.get("rsi_W"), "RSI M": r.get("rsi_M"),
                 })
@@ -704,31 +721,31 @@ if tab_trade is not None:
                         v3.metric("Overhead shelf", vp.get("resistance") or "—")
                         v4.metric("Supply above", f"{vp.get('overhead_pct')}%")
 
-                # TD Sequential exhaustion state (unofficial published rules)
-                td = r.get("demark")
-                if td is None:
-                    st.caption("TD Sequential: not computed yet — this snapshot "
-                               "predates the DeMark update. Hit ⟳ Update "
-                               "trading data to populate.")
-                elif td.get("ok"):
-                    if td.get("read"):
-                        st.markdown(f"**TD Sequential:** {td['read']} "
-                                    "<span class='muted'>(exhaustion flag — "
-                                    "counter-trend, measured by the ledger)</span>",
-                                    unsafe_allow_html=True)
-                    elif td.get("setup_count"):
-                        st.caption(f"TD Sequential: {td['setup_side']} setup "
-                                   f"{td['setup_count']}/9 in progress")
-                    else:
-                        _lasttd = (td.get("recent_setups") or [])
-                        if _lasttd:
-                            _x = _lasttd[-1]
-                            st.caption(f"TD Sequential: no active setup · last "
-                                       f"{_x['side']} 9 was {_x['bars_ago']} bars "
-                                       f"ago ({_x['date']})")
+                    # TD Sequential exhaustion state (unofficial published rules)
+                    td = r.get("demark")
+                    if td is None:
+                        st.caption("TD Sequential: not computed yet — this snapshot "
+                                   "predates the DeMark update. Hit ⟳ Update "
+                                   "trading data to populate.")
+                    elif td.get("ok"):
+                        if td.get("read"):
+                            st.markdown(f"**TD Sequential:** {td['read']} "
+                                        "<span class='muted'>(exhaustion flag — "
+                                        "counter-trend, measured by the ledger)</span>",
+                                        unsafe_allow_html=True)
+                        elif td.get("setup_count"):
+                            st.caption(f"TD Sequential: {td['setup_side']} setup "
+                                       f"{td['setup_count']}/9 in progress")
                         else:
-                            st.caption("TD Sequential: no active setup, none "
-                                       "completed in the last 30 bars")
+                            _lasttd = (td.get("recent_setups") or [])
+                            if _lasttd:
+                                _x = _lasttd[-1]
+                                st.caption(f"TD Sequential: no active setup · last "
+                                           f"{_x['side']} 9 was {_x['bars_ago']} bars "
+                                           f"ago ({_x['date']})")
+                            else:
+                                st.caption("TD Sequential: no active setup, none "
+                                           "completed in the last 30 bars")
 
                     # mean-reversion stretch — shown SEPARATELY from trend bias
                     mr = sg.get("meanrev")
