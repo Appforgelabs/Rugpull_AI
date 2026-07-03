@@ -170,6 +170,12 @@ GUIDE = [
      "Read it as agreement strength, NOT odds of winning. Open the vote breakdown to see what's driving it.",
      "Indicators are correlated, so 'many agree' overstates the evidence. Only the backtest tells you real win-rate."),
 
+    ("TD Sequential (DeMark)", "Exhaustion", "anticipatory",
+     "Counts persistent closes vs 4 bars earlier: 9 in a row flags exhaustion (BUY 9 after selling = bounce zone; SELL 9 after buying = stall zone). Countdown to 13 marks deeper exhaustion.",
+     "A fresh BUY Setup 9 near support is a classic dip-entry flag; a SELL 9 into your long is a take-profit/tighten-stop flag. 'Perfected' setups follow the stricter published rule.",
+     "Counter-trend by design — it anticipates turns instead of confirming trends, so it is deliberately NOT part of the trend vote. It appears in the scanner as timing evidence and in the ledger as a measured signal.",
+     "Unofficial implementation of the published rules (the full DeMark suite is proprietary; countdown cancellation here is simplified). Exhaustion flags fail in strong trends — that is exactly what the ledger hit-rate will tell you."),
+
     ("Volume Profile / CVD (approx)", "Volume", "coincident",
      "Time-decayed volume at each price level, split into estimated buyer- vs seller-controlled volume (a bar approximation of CVD, not tick data).",
      "Heavy bands = price zones where lots of cost basis lives (POC = the heaviest). Green tint = net buying there; red = net selling. Thin gaps = price tends to move fast through them.",
