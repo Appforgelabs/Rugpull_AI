@@ -704,6 +704,18 @@ if tab_trade is not None:
                         v3.metric("Overhead shelf", vp.get("resistance") or "—")
                         v4.metric("Supply above", f"{vp.get('overhead_pct')}%")
 
+                # TD Sequential exhaustion state (unofficial published rules)
+                td = r.get("demark") or {}
+                if td.get("ok"):
+                    if td.get("read"):
+                        st.markdown(f"**TD Sequential:** {td['read']} "
+                                    "<span class='muted'>(exhaustion flag — "
+                                    "counter-trend, measured by the ledger)</span>",
+                                    unsafe_allow_html=True)
+                    elif td.get("setup_count"):
+                        st.caption(f"TD Sequential: {td['setup_side']} setup "
+                                   f"{td['setup_count']}/9 in progress")
+
                     # mean-reversion stretch — shown SEPARATELY from trend bias
                     mr = sg.get("meanrev")
                     if mr and mr.get("stretch") is not None:

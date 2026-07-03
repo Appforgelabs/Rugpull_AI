@@ -140,6 +140,13 @@ def build_trading(client: FMPClient, sym: str, intraday_interval="5min",
     row["symbol"] = sym.upper()
     row["intraday_available"] = bool(intraday_df is not None and not intraday_df.empty)
 
+    # TD Sequential exhaustion state (unofficial, published rules)
+    try:
+        import demark as DM
+        row["demark"] = DM.td_state(daily)
+    except Exception:
+        row["demark"] = {"ok": False}
+
     # volume-shelf summary for the Trading tab
     vp = VP.build_profile(daily) if not daily.empty else {"ok": False}
     if vp.get("ok"):

@@ -179,6 +179,22 @@ def strat_swing_composite(d, i):
     return 1 if core["bias"] == "LONG" else -1 if core["bias"] == "SHORT" else 0
 
 
+def strat_td9(d, i):
+    """TD Sequential Setup-9 counter-trend: long on a fresh BUY 9 (downside
+    exhaustion), short on a fresh SELL 9. Pure exhaustion test, no trend filter
+    — the point is to measure whether the flag alone has edge."""
+    if i < 13:
+        return 0
+    c = d["close"].values
+    buy = all(c[i - k] < c[i - k - 4] for k in range(9))
+    sell = all(c[i - k] > c[i - k - 4] for k in range(9))
+    if buy:
+        return 1
+    if sell:
+        return -1
+    return 0
+
+
 def strat_volume_shelf(d, i):
     """Disposition-effect zones: long when price sits on a strong volume shelf
     (within 1 ATR above it) in an uptrend; short the mirror under overhead
@@ -202,6 +218,7 @@ STRATEGIES = {
     "RSI mean-reversion": strat_rsi_meanrev,
     "Swing composite (dashboard logic)": strat_swing_composite,
     "Volume shelf bounce (CVD zones)": strat_volume_shelf,
+    "TD Sequential 9 (counter-trend)": strat_td9,
 }
 
 

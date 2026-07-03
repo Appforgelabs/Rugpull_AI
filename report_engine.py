@@ -153,6 +153,25 @@ def scan_ideas(snaps: dict, macro: dict | None, *, direction="both",
                 ev.append(("Chasing extended move", -8.0, "timing",
                            f"stretch {stretch:+.2f} with bias"))
 
+        # TD Sequential exhaustion (counter-trend timing)
+        td = trading.get("demark") or {}
+        if td.get("ok"):
+            fresh = [x for x in td.get("recent_setups", [])
+                     if x.get("bars_ago", 99) <= 5]
+            cd = td.get("countdown") or {}
+            for x in fresh[-1:]:
+                if (x["side"] == "BUY") == (side > 0):
+                    ev.append(("TD exhaustion for entry", 7.0, "timing",
+                               f"TD {x['side']} 9 · {x['bars_ago']}b ago"
+                               + (" perfected" if x.get("perfected") else "")))
+                else:
+                    ev.append(("TD exhaustion against entry", -6.0, "timing",
+                               f"TD {x['side']} 9 {x['bars_ago']}b ago"))
+            if cd.get("count", 0) >= 11:
+                pts = 5.0 if (cd["side"] == "BUY") == (side > 0) else -5.0
+                ev.append(("TD Countdown late", pts, "timing",
+                           f"{cd['side']} {cd['count']}/13"))
+
         # the app's own MEASURED record (prediction ledger hit-rates)
         hr = _hit(timeframe.upper()) or _hit("OVERALL")
         if hr is not None:

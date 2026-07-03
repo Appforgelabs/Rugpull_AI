@@ -121,6 +121,15 @@ def record(ledger: dict, sym: str, trading: dict) -> bool:
             return False  # already recorded today
     votes = {v["signal"]: v["vote"]
              for v in sg.get("votes", []) if v.get("vote")}
+    # TD Sequential exhaustion vote — recorded for MEASUREMENT (it's
+    # counter-trend, so it's deliberately NOT part of the trend net score)
+    try:
+        import demark as DM
+        tdv = DM.td_vote(trading.get("demark") or {})
+        if tdv:
+            votes["TD Sequential"] = tdv
+    except Exception:
+        pass
     ledger["predictions"].append({
         "id": f"{sym}-{today}",
         "date": today, "ts": int(time.time()),
