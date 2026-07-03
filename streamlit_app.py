@@ -173,8 +173,9 @@ _inactive = set(st.session_state.app_settings.get("inactive") or [])
 # skipped by analysis until re-enabled.
 syms = [s for s in syms_all if s not in _inactive]
 
-# ---- 🔎 find-anything search (ctrl+F style) ---------------------------------
-_q = st.text_input("search", placeholder="🔎 Find a ticker or company… (e.g. NV, rocket, uber)",
+# ---- 🔎 find-anything search (type → match → full profile inline) ----------
+_q = st.text_input("search",
+                   placeholder="🔎 Find any ticker or company… then press Enter",
                    label_visibility="collapsed", key="global_search")
 if _q and _q.strip():
     _ql = _q.strip().upper()
@@ -187,96 +188,74 @@ if _q and _q.strip():
              or _ql in str(((_snaps_idx.get(s) or {}).get("result") or {})
                            .get("company", "")).upper()]
     if _hits:
-        st.caption(f"🔎 {len(_hits)} match{'es' if len(_hits) != 1 else ''}"
-                   + (" · ⏸ = paused" if _inactive else ""))
-        for s in _hits[:8]:
-            snp = _snaps_idx.get(s) or {}
-            res = snp.get("result") or {}
-            trd = snp.get("trading") or {}
-            sg = (trd.get("signal") or {})
-            corr = ((res.get("zones") or {}).get("corridor") or {})
-            px = trd.get("price") or res.get("price")
-            up = (round((corr["fair"] - px) / px * 100, 1)
-                  if corr.get("ok") and corr.get("fair") and px else None)
-            bits = [f"**{s}**" + (" ⏸" if s in _inactive else ""),
-                    str(res.get("company", _names.get(s, ""))),
-                    f"${px}" if px else "no data yet",
-                    f"score {res.get('composite_score')}" if res.get("composite_score") is not None else "",
-                    f"{sg.get('direction')} {sg.get('probability')}%" if sg.get("direction") else "",
-                    f"corridor {up:+.0f}%" if up is not None else "",
-                    f"({SS.age_str(snp)})" if snp else ""]
-            st.markdown(" · ".join(b for b in bits if b))
-        if len(_hits) > 8:
-            st.caption(f"…and {len(_hits) - 8} more — keep typing to narrow.")
+        _sel = _hits[0] if len(_hits) == 1 else st.selectbox(
+            f"{len(_hits)} matches — pick one", _hits, key="search_pick")
+        _snp = _snaps_idx.get(_sel) or {}
+        _res = _snp.get("result") or {}
+        _trd = _snp.get("trading") or {}
+        _sg = _trd.get("signal") or {}
+        _corr = ((_res.get("zones") or {}).get("corridor") or {})
+        _px = _trd.get("price") or _res.get("price")
+        _up = (round((_corr["fair"] - _px) / _px * 100, 1)
+               if _corr.get("ok") and _corr.get("fair") and _px else None)
+        _paused = " · ⏸ PAUSED" if _sel in _inactive else ""
+        st.markdown(f"#### {_sel} — {_res.get('company', _names.get(_sel, _sel))}"
+                    f"{_paused}  <span class='muted'>({SS.age_str(_snp) if _snp else 'no data'})</span>",
+                    unsafe_allow_html=True)
+        if not (_res or _trd):
+            st.info(f"{_sel} is known but has no stored analysis yet — hit "
+                    "⟳ Update all, or analyze it on demand below.")
+            if st.button(f"⚡ Analyze {_sel} now", key="search_analyze_known"):
+                with st.spinner(f"Analyzing {_sel}…"):
+                    try:
+                        lookup_ticker(client, _sel)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Couldn't analyze {_sel}: {e}")
+        else:
+            _c1, _c2, _c3, _c4 = st.columns(4)
+            _c1.metric("Price", f"${_px}" if _px else "—")
+            _c2.metric("Composite", _res.get("composite_score", "—"))
+            _c3.metric("Bias", f"{_sg.get('direction','—')}",
+                       f"{_sg.get('probability','')}% agreement" if _sg.get("probability") else None,
+                       delta_color="off")
+            _c4.metric("Corridor gap", f"{_up:+.0f}%" if _up is not None else "—")
+            _d1, _d2, _d3, _d4 = st.columns(4)
+            _d1.metric("Swing", ((_sg.get("swing") or {}).get("bias")) or "—")
+            _d2.metric("Day", ((_sg.get("day") or {}).get("bias")) or "—")
+            _rs = (_trd.get("rel_strength") or {}).get("rs_vs_spy")
+            _d3.metric("RS vs SPY", f"{_rs:+.1f}%" if _rs is not None else "—")
+            _sent = (_res.get("sentiment") or {}).get("score")
+            _d4.metric("Sentiment", f"{_sent:.0f}/100" if _sent is not None else "—")
+            _vp = _trd.get("vp") or {}
+            if _vp:
+                st.caption(f"Volume shelves — POC {_vp.get('poc','—')} · "
+                           f"support {_vp.get('support','—')} · "
+                           f"overhead {_vp.get('resistance','—')} · "
+                           f"supply above {_vp.get('overhead_pct','—')}%")
+            _series = _res.get("series") or _snp.get("prices") or []
+            if len(_series) > 10:
+                import pandas as _spd
+                _sc = _spd.Series({p["d"]: p["c"] for p in _series[-120:]},
+                                  name=_sel)
+                st.line_chart(_sc, height=160)
+            st.caption("Full detail → Analyzer · Trading · Report tabs.")
     else:
         st.caption(f"No match for '{_q}' in your data.")
         if _ql.isalnum() and len(_ql) <= 5:
-            if st.button(f"⚡ Analyze {_ql} on demand (any US ticker)"):
+            if st.button(f"⚡ Analyze {_ql} on demand (any US ticker)",
+                         key="search_analyze_new"):
                 with st.spinner(f"Analyzing {_ql}…"):
                     try:
                         lookup_ticker(client, _ql)
                         st.session_state.last_lookup = _ql
-                        st.success(f"{_ql} analyzed — search again or open the "
-                                   "Report tab for the full write-up.")
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Couldn't analyze {_ql}: {e}")
 
-with st.expander("🔎 Search — look up any ticker or filter your watchlist", expanded=False):
-    sb1, sb2 = st.columns([3, 2])
-    with sb1:
-        look = st.text_input("Look up any ticker (analyzes on demand)",
-                             placeholder="e.g. PLTR, COIN, SHOP",
-                             key="search_lookup").upper().strip()
-        if st.button("Analyze ticker", key="do_lookup") and look:
-            with st.spinner(f"Analyzing {look}…"):
-                try:
-                    lookup_ticker(client, look)
-                    st.session_state.last_lookup = look
-                    if look not in syms:
-                        st.caption(f"✓ {look} analyzed (not added to watchlist — "
-                                   "use the sidebar to add it permanently). Open "
-                                   "the **Report** tab to see the full write-up.")
-                    st.success(f"{look} ready — see Analyzer or Report tab.")
-                except Exception as e:
-                    st.error(f"Couldn't analyze {look}: {e}")
-    with sb2:
-        filt = st.text_input("Filter watchlist", placeholder="type to filter…",
-                             key="search_filter").upper().strip()
-        if filt:
-            hits = [s for s in syms if filt in s]
-            st.caption(f"{len(hits)} match: {', '.join(hits) if hits else '—'}")
 
 # ---- sidebar ---------------------------------------------------------------
 with st.sidebar:
-    with st.expander("⚙ Layout & tickers"):
-        _cur_tabs = (st.session_state.app_settings.get("visible_tabs")
-                     or ["⬢ Dashboard", "Analyzer", "Trading", "Scenarios",
-                         "Research", "Paper Trade", "Report", "Macro",
-                         "Backtest", "Learn", "Corridor Chart"])
-        _sel_tabs = st.multiselect(
-            "Visible tabs", ["⬢ Dashboard", "Analyzer", "Trading", "Scenarios",
-                             "Research", "Paper Trade", "Report", "Macro",
-                             "Backtest", "Learn", "Corridor Chart"],
-            default=_cur_tabs,
-            help="Hide tabs you don't use. Nothing is deleted — just hidden.")
-        _cur_active = [s for s in syms_all
-                       if s not in set(st.session_state.app_settings.get("inactive") or [])]
-        _sel_active = st.multiselect(
-            "Active tickers", syms_all, default=_cur_active,
-            help="Deselect to PAUSE a ticker: it stays in your watchlist and "
-                 "keeps old snapshots, but is skipped by updates, rankings, "
-                 "scans, the ledger, and the paper portfolio until re-enabled.")
-        if st.button("Apply layout", use_container_width=True):
-            st.session_state.app_settings["visible_tabs"] = _sel_tabs or None
-            st.session_state.app_settings["inactive"] = [
-                s for s in syms_all if s not in _sel_active]
-            save_settings()
-            st.rerun()
-        _n_off = len(syms_all) - len(_cur_active)
-        if _n_off:
-            st.caption(f"⏸ {_n_off} ticker(s) paused: "
-                       f"{', '.join(s for s in syms_all if s not in _cur_active)}")
-
     st.subheader("Watchlist")
     new = st.text_input("Add ticker", placeholder="PLTR").upper().strip()
     if st.button("Add", use_container_width=True) and new:
@@ -414,12 +393,15 @@ ALL_TABS = [("⬢ Dashboard", "tab_dash"), ("Analyzer", "tab1"),
             ("Research", "tab_research"), ("Paper Trade", "tab_paper"),
             ("Report", "tab_report"), ("Macro", "tab_macro"),
             ("Backtest", "tab_bt"), ("Learn", "tab_learn"),
-            ("Corridor Chart", "tab2")]
+            ("Corridor Chart", "tab2"), ("⚙ Settings", "tab_set")]
 _visible = st.session_state.app_settings.get("visible_tabs") or [n for n, _ in ALL_TABS]
 _visible = [n for n, _ in ALL_TABS if n in _visible] or [n for n, _ in ALL_TABS]
+if "⚙ Settings" not in _visible:      # can never be hidden — it's the way back
+    _visible.append("⚙ Settings")
 _created = st.tabs(_visible)
 _lookup = dict(zip(_visible, _created))
-tab_dash, tab1, tab_trade, tab_sc, tab_research, tab_paper, tab_report,     tab_macro, tab_bt, tab_learn, tab2 = (
+tab_dash, tab1, tab_trade, tab_sc, tab_research, tab_paper, tab_report, \
+    tab_macro, tab_bt, tab_learn, tab2, tab_set = (
         _lookup.get(n) for n, _ in ALL_TABS)
 
 if tab_dash is not None:
@@ -1385,3 +1367,44 @@ if tab2 is not None:
                       f"window.__RUGPULL_WATCHLIST__={json.dumps(st.session_state.watchlist)};")
             html = html.replace("/*__RUGPULL_INJECT__*/", inject)
             st.components.v1.html(html, height=1000, scrolling=True)
+
+
+if tab_set is not None:
+    with tab_set:
+        st.subheader("⚙ Settings")
+        st.caption("Layout and ticker controls. Saved to your Sheet — they "
+                   "follow you across devices.")
+
+        st.markdown("**Visible tabs** — hide what you don't use (nothing is "
+                    "deleted; ⚙ Settings always stays).")
+        _hideable = [n for n, _ in ALL_TABS if n != "⚙ Settings"]
+        _cur_tabs = [n for n in (st.session_state.app_settings.get("visible_tabs")
+                                 or _hideable) if n != "⚙ Settings"]
+        _sel_tabs = st.multiselect("Tabs", _hideable, default=_cur_tabs,
+                                   label_visibility="collapsed")
+
+        st.markdown("**Active tickers** — deselect to ⏸ pause: the ticker "
+                    "stays in your watchlist with its history, but is skipped "
+                    "by updates, rankings, scans, the ledger, and the paper "
+                    "portfolio until re-enabled.")
+        _cur_active = [s for s in syms_all if s not in _inactive]
+        _sel_active = st.multiselect("Tickers", syms_all, default=_cur_active,
+                                     label_visibility="collapsed")
+
+        c_a, c_b = st.columns([1, 3])
+        if c_a.button("💾 Apply & save", use_container_width=True,
+                      type="primary"):
+            st.session_state.app_settings["visible_tabs"] = \
+                (_sel_tabs + ["⚙ Settings"]) if _sel_tabs else None
+            st.session_state.app_settings["inactive"] = [
+                s for s in syms_all if s not in _sel_active]
+            save_settings()
+            st.rerun()
+        _n_hidden = len(_hideable) - len(_sel_tabs)
+        _n_paused = len(syms_all) - len(_sel_active)
+        c_b.caption(f"{_n_hidden} tab(s) will be hidden · {_n_paused} ticker(s) "
+                    f"will be paused. Changes take effect on Apply.")
+
+        _paused_now = sorted(_inactive)
+        if _paused_now:
+            st.caption("Currently paused: " + ", ".join(_paused_now))
