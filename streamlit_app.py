@@ -636,6 +636,41 @@ if tab_trade is not None:
                     return f"{td['setup_side'][0]} {td['setup_count']}/9"
                 return "—"
 
+            def _td_plain(r):
+                td = r.get("demark") or {}
+                if not td.get("ok"):
+                    return "not computed — run ⟳ Update trading data"
+                cd = td.get("countdown") or {}
+                if cd.get("complete"):
+                    return (f"Countdown 13 done — deep "
+                            f"{'downside' if cd['side'] == 'BUY' else 'upside'} "
+                            f"exhaustion (strongest flag)")
+                if cd.get("count", 0) >= 11:
+                    return (f"Countdown {cd['count']}/13 — deeper "
+                            f"{'downside' if cd['side'] == 'BUY' else 'upside'} "
+                            f"exhaustion building")
+                rec = [x for x in (td.get("recent_setups") or [])
+                       if x.get("bars_ago", 99) <= 9]
+                if rec:
+                    x = rec[-1]
+                    if x["side"] == "BUY":
+                        return (f"Decline looks tired — buy setup 9 completed "
+                                f"{x['bars_ago']}b ago"
+                                + (", perfected" if x.get("perfected") else "")
+                                + " (bounce zone)")
+                    return (f"Rally looks tired — sell setup 9 completed "
+                            f"{x['bars_ago']}b ago"
+                            + (", perfected" if x.get("perfected") else "")
+                            + " (stall/pullback zone)")
+                if td.get("setup_count", 0) >= 6:
+                    side = ("selling streak" if td["setup_side"] == "BUY"
+                            else "buying streak")
+                    return (f"{td['setup_count']}/9 — persistent {side}, "
+                            f"watch for 9")
+                if td.get("setup_count"):
+                    return f"{td['setup_count']}/9 counting — not a signal yet"
+                return "no exhaustion signal (normal state)"
+
             head = []
             for r in trows:
                 sg = r.get("signal", {})
@@ -647,9 +682,40 @@ if tab_trade is not None:
                     "TD": _td_cell(r),
                     "RSI 1d": r.get("rsi_1d"), "RSI D": r.get("rsi_D"),
                     "RSI W": r.get("rsi_W"), "RSI M": r.get("rsi_M"),
+                    "TD meaning": _td_plain(r),
                 })
             head.sort(key=lambda x: (x["Prob %"] or 0), reverse=True)
-            st.dataframe(head, use_container_width=True, hide_index=True)
+            st.dataframe(
+                head, use_container_width=True, hide_index=True,
+                column_config={
+                    "TD": st.column_config.TextColumn(
+                        "TD",
+                        help="TD Sequential (DeMark) — exhaustion counter, in "
+                             "plain English:\n\n"
+                             "• **BUY 9 (3b)** — nine straight days of closes "
+                             "below the close 4 days earlier, completed 3 bars "
+                             "ago. The DECLINE looks tired → bounce zone.\n\n"
+                             "• **SELL 9 (6b)** — nine straight days of closes "
+                             "above 4 days earlier, 6 bars ago. The RALLY looks "
+                             "tired → stall/pullback zone.\n\n"
+                             "• **B 4/9 or S 7/9** — a count in progress, not "
+                             "yet a signal.\n\n"
+                             "• **B·CD 12/13** — post-setup Countdown near 13 "
+                             "= deeper exhaustion.\n\n"
+                             "• **—** — nothing active (the normal state).\n\n"
+                             "Counter-trend flags, not commands — they fail in "
+                             "strong trends, and the prediction ledger measures "
+                             "their real hit-rate on your names. Open a "
+                             "ticker's dropdown for its full TD sentence."),
+                    "TD meaning": st.column_config.TextColumn(
+                        "TD meaning", width="large",
+                        help="Plain-English decode of the TD column — "
+                             "exhaustion flags, not commands."),
+                    "Prob %": st.column_config.NumberColumn(
+                        "Prob %",
+                        help="Trend-vote agreement (deduplicated), capped at "
+                             "72%. NOT a win-rate — the ledger measures those."),
+                })
 
             for r in trows:
                 sg = r.get("signal", {})
