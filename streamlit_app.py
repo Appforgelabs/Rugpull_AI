@@ -705,8 +705,12 @@ if tab_trade is not None:
                         v4.metric("Supply above", f"{vp.get('overhead_pct')}%")
 
                 # TD Sequential exhaustion state (unofficial published rules)
-                td = r.get("demark") or {}
-                if td.get("ok"):
+                td = r.get("demark")
+                if td is None:
+                    st.caption("TD Sequential: not computed yet — this snapshot "
+                               "predates the DeMark update. Hit ⟳ Update "
+                               "trading data to populate.")
+                elif td.get("ok"):
                     if td.get("read"):
                         st.markdown(f"**TD Sequential:** {td['read']} "
                                     "<span class='muted'>(exhaustion flag — "
@@ -715,6 +719,16 @@ if tab_trade is not None:
                     elif td.get("setup_count"):
                         st.caption(f"TD Sequential: {td['setup_side']} setup "
                                    f"{td['setup_count']}/9 in progress")
+                    else:
+                        _lasttd = (td.get("recent_setups") or [])
+                        if _lasttd:
+                            _x = _lasttd[-1]
+                            st.caption(f"TD Sequential: no active setup · last "
+                                       f"{_x['side']} 9 was {_x['bars_ago']} bars "
+                                       f"ago ({_x['date']})")
+                        else:
+                            st.caption("TD Sequential: no active setup, none "
+                                       "completed in the last 30 bars")
 
                     # mean-reversion stretch — shown SEPARATELY from trend bias
                     mr = sg.get("meanrev")
