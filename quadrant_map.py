@@ -115,11 +115,32 @@ def build_points(snaps: dict, timeframe: str = "medium",
             continue
 
         bias = ((trading.get("signal") or {}).get("direction")) or "WAIT"
+
+        # reversal score: TD Sequential exhaustion + extreme stretch, -3..+3
+        rev = 0
+        td = trading.get("demark") or {}
+        if td.get("ok"):
+            for s2 in (td.get("recent_setups") or []):
+                if s2.get("bars_ago", 99) <= 5:
+                    unit = 1 if s2["side"] == "BUY" else -1
+                    rev += unit + (unit if s2.get("perfected") else 0)
+            cd = td.get("countdown") or {}
+            if cd.get("count", 0) >= 11:
+                rev += (1 if cd["side"] == "BUY" else -1) * (2 if cd.get("complete") else 1)
+        stretch = ((trading.get("signal") or {}).get("meanrev") or {}).get("stretch")
+        if stretch is not None:
+            if stretch <= -1.5:
+                rev += 1          # stretched down → snap-back up potential
+            elif stretch >= 1.5:
+                rev -= 1          # stretched up → pullback potential
+        rev = max(-3, min(3, rev))
+
         points.append({
             "sym": sym, "x": round(x, 1), "y": round(y, 1),
             "bias": bias, "composite": composite,
             "price": trading.get("price") or result.get("price"),
             "gap": round(up, 1),
+            "rev": rev,
         })
 
     _spread(points)
@@ -159,7 +180,7 @@ def render_quadrant_html(data: dict, height: int = 480) -> str:
   function draw(){{
     const dpr=window.devicePixelRatio||1, w=wrap.clientWidth, h={height};
     cv.width=w*dpr; cv.height=h*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
-    const padL=46,padR=14,padT=26,padB=40;
+    const padL=46,padR=14,padT=26,padB=62;
     const plotW=w-padL-padR, plotH=h-padT-padB;
     const ins=16;
     const X=v=>padL+ins+((v+XR)/(2*XR))*(plotW-2*ins);
@@ -186,7 +207,21 @@ def render_quadrant_html(data: dict, height: int = 480) -> str:
     ctx.fillText('INEXPENSIVE · DOWNSIDE — value trap?', padL+8, padT+plotH-8);
     // axis titles
     ctx.textAlign='center';ctx.fillStyle='#8899aa';ctx.font='11px system-ui';
-    ctx.fillText('← DOWNSIDE      '+D.xlabel+'      UPSIDE →', padL+plotW/2, h-10);
+    ctx.fillText('← DOWNSIDE      '+D.xlabel+'      UPSIDE →', padL+plotW/2, h-30);
+    // reversal-arrow legend
+    const GC=['rgba(63,179,127,0.45)','rgba(63,179,127,0.75)','#2ee88f'];
+    const RC=['rgba(214,90,90,0.45)','rgba(214,90,90,0.75)','#ff5a58'];
+    function arrow(ax,ay,dir,col){{ctx.strokeStyle=col;ctx.fillStyle=col;ctx.lineWidth=1.6;
+      ctx.beginPath();ctx.moveTo(ax,ay);ctx.lineTo(ax,ay-dir*9);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(ax,ay-dir*13);ctx.lineTo(ax-3.5,ay-dir*6);
+      ctx.lineTo(ax+3.5,ay-dir*6);ctx.closePath();ctx.fill();}}
+    let lx=padL+plotW/2-232;const ly=h-8;
+    ctx.font='10px system-ui';ctx.textAlign='left';ctx.fillStyle='#8899aa';
+    ctx.fillText('Reversal (TD + stretch):',lx,ly);lx+=128;
+    for(let g=0;g<3;g++){{arrow(lx,ly+1,1,GC[g]);lx+=13;}}
+    ctx.fillStyle='#8899aa';ctx.fillText('up',lx+2,ly);lx+=28;
+    for(let g=0;g<3;g++){{arrow(lx,ly-8,-1,RC[g]);lx+=13;}}
+    ctx.fillStyle='#8899aa';ctx.fillText('down · brighter = stronger · none = neutral',lx+2,ly);
     ctx.save();ctx.translate(14,padT+plotH/2);ctx.rotate(-Math.PI/2);
     ctx.fillText('← INEXPENSIVE   (price vs corridor fair value)   EXPENSIVE →',0,0);
     ctx.restore();
@@ -201,6 +236,13 @@ def render_quadrant_html(data: dict, height: int = 480) -> str:
       const col=p.bias==='LONG'?'#3fb37f':p.bias==='SHORT'?'#d6504f':'#8899aa';
       ctx.beginPath();ctx.arc(x,y,4.5,0,7);ctx.fillStyle=col;ctx.globalAlpha=.9;
       ctx.fill();ctx.globalAlpha=1;
+      if(p.rev){{
+        const g=Math.min(3,Math.abs(p.rev))-1;
+        const ac=p.rev>0?GC[g]:RC[g];
+        const ay=p.rev>0?y-7:y+7, dir=p.rev>0?1:-1;
+        arrow(x,ay,dir,ac);
+        placed.push({{x1:x-5,y1:Math.min(ay,ay-dir*14)-1,x2:x+5,y2:Math.max(ay,ay-dir*14)+1}});
+      }}
       const tw=ctx.measureText(p.sym).width, th=10;
       const cands=[[x+7,y+3],[x-tw-7,y+3],[x-tw/2,y-8],[x-tw/2,y+15],
                    [x+7,y-8],[x+7,y+15],[x-tw-7,y-8],[x-tw-7,y+15]];
@@ -224,7 +266,10 @@ def render_quadrant_html(data: dict, height: int = 480) -> str:
       tip.innerHTML='<b>'+p.sym+'</b> · $'+p.price+'<br>'+
         'corridor gap '+(p.gap>0?'+':'')+p.gap+'% ('+(p.gap>0?'below fair — inexpensive':'above fair — expensive')+')<br>'+
         'outlook x '+(p.x>0?'+':'')+p.x+' · bias '+p.bias+
-        (p.composite!=null?' · composite '+p.composite:'');
+        (p.composite!=null?' · composite '+p.composite:'')+
+        (p.rev?('<br>'+(p.rev>0?'▲ reversal-up':'▼ reversal-down')+' evidence: '+
+          ['','light','medium','strong'][Math.min(3,Math.abs(p.rev))]+
+          ' (TD exhaustion / stretch — measured, not predicted)'):'');
       tip.style.left=Math.min(best.x+12, wrap.clientWidth-220)+'px';
       tip.style.top=(best.y+14)+'px'; tip.style.display='block';
     }} else tip.style.display='none';

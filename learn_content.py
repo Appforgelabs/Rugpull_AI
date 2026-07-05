@@ -170,6 +170,12 @@ GUIDE = [
      "Read it as agreement strength, NOT odds of winning. Open the vote breakdown to see what's driving it.",
      "Indicators are correlated, so 'many agree' overstates the evidence. Only the backtest tells you real win-rate."),
 
+    ("Quadrant Map & reversal arrows", "Dashboard", "mixed",
+     "Every ticker on one chart: Y = valuation (price vs corridor fair value; expensive top, inexpensive bottom), X = directional outlook, which CHANGES with the timeframe you pick — Short: weighted trend votes (mostly lagging) nudged by TD flags; Medium: bootstrap P(up in 21d) from the stock's own return history (odds, not a forecast); Long: 6-month momentum + position vs SMA200 (the persistence factor).",
+     "Bottom-right = inexpensive with upside (sweet spot) · top-right = expensive momentum · bottom-left = cheap but falling (value trap risk) · top-left = expensive and falling (danger). Arrows mark REVERSAL evidence: green ▲ = potential move higher, red ▼ = potential lower; brightness = strength (light/medium/bright); no arrow = no reversal evidence.",
+     "The arrow score nets TD Sequential exhaustion (fresh Setup 9 = 1, perfected = 2, Countdown ≥11 = +1, completed 13 = +2) against mean-reversion stretch (±1 beyond 1.5σ). Conflicting evidence cancels to no arrow. A bright green arrow in the sweet-spot quadrant is the strongest confluence the map can show — cheap, upside odds, AND exhaustion of the selling.",
+     "Positions use soft compression, so extreme corridor gaps (>100%) crowd toward the edge — treat those as 'check the inputs' flags, not free doubles. Arrows are exhaustion/stretch EVIDENCE whose hit-rate the ledger measures; they are not predictions, and quadrants are a reading aid, not a rating."),
+
     ("TD Sequential (DeMark)", "Exhaustion", "anticipatory",
      "Counts persistent closes vs 4 bars earlier: 9 in a row flags exhaustion (BUY 9 after selling = bounce zone; SELL 9 after buying = stall zone). Countdown to 13 marks deeper exhaustion.",
      "A fresh BUY Setup 9 near support is a classic dip-entry flag; a SELL 9 into your long is a take-profit/tighten-stop flag. 'Perfected' setups follow the stricter published rule.",
