@@ -393,7 +393,8 @@ ALL_TABS = [("⬢ Dashboard", "tab_dash"), ("Analyzer", "tab1"),
             ("Research", "tab_research"), ("Paper Trade", "tab_paper"),
             ("Report", "tab_report"), ("Macro", "tab_macro"),
             ("Backtest", "tab_bt"), ("Learn", "tab_learn"),
-            ("Corridor Chart", "tab2"), ("⚙ Settings", "tab_set")]
+            ("Corridor Chart", "tab2"), ("Map", "tab_map"),
+            ("⚙ Settings", "tab_set")]
 _visible = st.session_state.app_settings.get("visible_tabs") or [n for n, _ in ALL_TABS]
 _visible = [n for n, _ in ALL_TABS if n in _visible] or [n for n, _ in ALL_TABS]
 if "⚙ Settings" not in _visible:      # can never be hidden — it's the way back
@@ -401,7 +402,7 @@ if "⚙ Settings" not in _visible:      # can never be hidden — it's the way b
 _created = st.tabs(_visible)
 _lookup = dict(zip(_visible, _created))
 tab_dash, tab1, tab_trade, tab_sc, tab_research, tab_paper, tab_report, \
-    tab_macro, tab_bt, tab_learn, tab2, tab_set = (
+    tab_macro, tab_bt, tab_learn, tab2, tab_map, tab_set = (
         _lookup.get(n) for n, _ in ALL_TABS)
 
 if tab_dash is not None:
@@ -1476,6 +1477,45 @@ if tab2 is not None:
                       f"window.__RUGPULL_WATCHLIST__={json.dumps(st.session_state.watchlist)};")
             html = html.replace("/*__RUGPULL_INJECT__*/", inject)
             st.components.v1.html(html, height=1000, scrolling=True)
+
+
+if tab_map is not None:
+    with tab_map:
+        import quadrant_map as QM
+        st.caption("Every ticker on one map: valuation (Y) × directional "
+                   "outlook (X). Bottom-right = inexpensive with upside (the "
+                   "sweet spot) · top-left = expensive with downside. Hover a "
+                   "dot for detail. Quadrants are a reading aid, not a rating.")
+
+        m1, m2, m3 = st.columns([2, 2, 2])
+        tf_pick = m1.radio("Timeframe", ["Short (~2 wks)", "Medium (~1–3 mo)",
+                                         "Long (~6–12 mo)"],
+                           index=1, horizontal=False)
+        tf = ("short" if tf_pick.startswith("Short")
+              else "medium" if tf_pick.startswith("Medium") else "long")
+        min_comp = m2.slider("Min composite quality", 0, 80, 0, step=5)
+        m3.markdown("**Legend**")
+        m3.caption("🟢 LONG bias · 🔴 SHORT bias · ⚪ WAIT — color is the "
+                   "current swing signal, position is valuation × outlook")
+
+        snaps = {s: SS.load_snapshot(s) for s in syms}
+        snaps = {k: v for k, v in snaps.items() if v}
+        qd = QM.build_points(snaps, timeframe=tf, min_composite=min_comp)
+        st.components.v1.html(
+            '<meta charset="utf-8">' + QM.render_quadrant_html(qd), height=500)
+
+        _x_expl = {"short": "X = weighted trend votes (learned weights, TD-"
+                            "nudged) — mostly LAGGING agreement, days–2 weeks.",
+                   "medium": "X = bootstrap P(up in 21d) from each ticker's own "
+                             "return history — distribution odds, not a forecast.",
+                   "long": "X = 6-month momentum + position vs SMA200 — the "
+                           "persistence factor; it continues until it doesn't."}
+        st.caption(_x_expl[tf] + " · Y = price vs corridor fair value on all "
+                   "timeframes. " + qd["note"])
+        if qd["excluded"]:
+            st.caption(f"Not plottable (no corridor fair value / insufficient "
+                       f"history): {', '.join(qd['excluded'])} — listed rather "
+                       f"than faked.")
 
 
 if tab_set is not None:
