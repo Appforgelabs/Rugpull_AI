@@ -23,6 +23,30 @@ honestly and are listed separately instead of faked.
 
 from __future__ import annotations
 import json
+import math
+
+
+def _squash(v: float, scale: float, ref: float, out: float) -> float:
+    """Monotonic soft compression: spreads extremes instead of stacking them
+    on the chart border (asinh keeps mid-range nearly linear). Hard-capped so
+    pathological values (e.g. a 600% corridor gap from a cyclical EPS spike)
+    can't exceed the plot range."""
+    s = out * math.asinh(v / scale) / math.asinh(ref / scale)
+    return max(-out, min(out, s))
+
+
+def _spread(points: list, min_dx: float = 4.0, min_dy: float = 3.2) -> None:
+    """Guarantee no two dots overlap, whatever the data does: nudge collisions
+    apart vertically (toward center) in small steps. Deterministic."""
+    placed = []
+    for p in sorted(points, key=lambda q: (q["y"], q["x"], q["sym"])):
+        step = 0
+        while any(abs(p["x"] - q["x"]) < min_dx and abs(p["y"] - q["y"]) < min_dy
+                  for q in placed) and step < 60:
+            p["y"] += min_dy * (1 if p["y"] < 0 else -1)   # nudge toward center
+            step += 1
+        p["y"] = round(max(-74.0, min(74.0, p["y"])), 1)
+        placed.append(p)
 
 
 def _corr_upside(result: dict) -> float | None:
@@ -48,19 +72,19 @@ def build_points(snaps: dict, timeframe: str = "medium",
         if up is None:
             excluded.append(sym)
             continue
-        y = max(-75.0, min(75.0, -up))          # expensive = up, cheap = down
+        y = _squash(-up, 30.0, 250.0, 74.0)      # expensive = up, cheap = down
 
         x = None
         if timeframe == "short":
             sg = (trading.get("signal") or {})
             net = sg.get("net_score")
             if net is not None:
-                x = max(-100.0, min(100.0, float(net) * 20.0))
+                raw = float(net) * 20.0
                 td = trading.get("demark") or {}
                 for s in (td.get("recent_setups") or []):
                     if s.get("bars_ago", 99) <= 5:
-                        x += 8.0 if s["side"] == "BUY" else -8.0
-                x = max(-100.0, min(100.0, x))
+                        raw += 8.0 if s["side"] == "BUY" else -8.0
+                x = _squash(raw, 40.0, 160.0, 98.0)
         elif timeframe == "medium":
             series = result.get("series") or snap.get("prices") or []
             closes = [p.get("c") for p in series if p.get("c")]
@@ -69,8 +93,8 @@ def build_points(snaps: dict, timeframe: str = "medium",
                     import scenario_engine as SE
                     sim = SE.simulate(closes, horizon=21, n_paths=200, seed=7)
                     if sim.get("ok"):
-                        x = max(-100.0, min(100.0,
-                                            (sim["prob_above_spot"] - 50) * 2.5))
+                        x = _squash((sim["prob_above_spot"] - 50) * 2.5,
+                                    45.0, 140.0, 98.0)
                 except Exception:
                     x = None
         else:  # long
@@ -84,7 +108,7 @@ def build_points(snaps: dict, timeframe: str = "medium",
             if comps:
                 blend = (0.6 * (r126 if r126 is not None else p200)
                          + 0.4 * (p200 if p200 is not None else r126))
-                x = max(-100.0, min(100.0, blend * 300.0))
+                x = _squash(blend * 300.0, 45.0, 300.0, 98.0)
 
         if x is None:
             excluded.append(sym)
@@ -97,6 +121,8 @@ def build_points(snaps: dict, timeframe: str = "medium",
             "price": trading.get("price") or result.get("price"),
             "gap": round(up, 1),
         })
+
+    _spread(points)
 
     xlabels = {
         "short": "short-term trend score (weighted votes, TD-nudged · mostly lagging)",
@@ -135,8 +161,9 @@ def render_quadrant_html(data: dict, height: int = 480) -> str:
     cv.width=w*dpr; cv.height=h*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
     const padL=46,padR=14,padT=26,padB=40;
     const plotW=w-padL-padR, plotH=h-padT-padB;
-    const X=v=>padL+((v+XR)/(2*XR))*plotW;
-    const Y=v=>padT+((YR-v)/(2*YR))*plotH;
+    const ins=16;
+    const X=v=>padL+ins+((v+XR)/(2*XR))*(plotW-2*ins);
+    const Y=v=>padT+ins+((YR-v)/(2*YR))*(plotH-2*ins);
     ctx.clearRect(0,0,w,h);
     // quadrant tints
     ctx.fillStyle='rgba(63,179,127,0.06)';   // cheap+upside (bottom-right)
@@ -163,15 +190,28 @@ def render_quadrant_html(data: dict, height: int = 480) -> str:
     ctx.save();ctx.translate(14,padT+plotH/2);ctx.rotate(-Math.PI/2);
     ctx.fillText('← INEXPENSIVE   (price vs corridor fair value)   EXPENSIVE →',0,0);
     ctx.restore();
-    // points
+    // points with greedy label collision avoidance
     px=[];
     ctx.font='10px ui-monospace,monospace';ctx.textAlign='left';
-    for(const p of D.pts){{
+    const placed=[];
+    const overlaps=(r)=>placed.some(q=>!(r.x2<q.x1||r.x1>q.x2||r.y2<q.y1||r.y1>q.y2));
+    const pts=[...D.pts].sort((a,b)=>a.y-b.y||a.x-b.x);
+    for(const p of pts){{
       const x=X(Math.max(-XR,Math.min(XR,p.x))), y=Y(Math.max(-YR,Math.min(YR,p.y)));
       const col=p.bias==='LONG'?'#3fb37f':p.bias==='SHORT'?'#d6504f':'#8899aa';
       ctx.beginPath();ctx.arc(x,y,4.5,0,7);ctx.fillStyle=col;ctx.globalAlpha=.9;
       ctx.fill();ctx.globalAlpha=1;
-      ctx.fillStyle='#aebccd';ctx.fillText(p.sym,x+7,y+3);
+      const tw=ctx.measureText(p.sym).width, th=10;
+      const cands=[[x+7,y+3],[x-tw-7,y+3],[x-tw/2,y-8],[x-tw/2,y+15],
+                   [x+7,y-8],[x+7,y+15],[x-tw-7,y-8],[x-tw-7,y+15]];
+      let lx=cands[0][0], ly=cands[0][1], ok=false;
+      for(const[cx,cy] of cands){{
+        const r={{x1:cx-1,y1:cy-th,x2:cx+tw+1,y2:cy+2}};
+        if(cx>=padL+2 && cx+tw<=padL+plotW-2 && cy-th>=padT+2 && cy<=padT+plotH-2
+           && !overlaps(r)){{lx=cx;ly=cy;ok=true;placed.push(r);break;}}
+      }}
+      if(!ok) placed.push({{x1:lx-1,y1:ly-th,x2:lx+tw+1,y2:ly+2}});
+      ctx.fillStyle='#aebccd';ctx.fillText(p.sym,lx,ly);
       px.push({{x,y,p}});
     }}
   }}
