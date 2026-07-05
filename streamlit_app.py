@@ -1512,6 +1512,17 @@ if tab_map is not None:
                            "persistence factor; it continues until it doesn't."}
         st.caption(_x_expl[tf] + " · Y = price vs corridor fair value on all "
                    "timeframes. " + qd["note"])
+        _n_arrows = sum(1 for p in qd["points"] if p.get("rev"))
+        if _n_arrows:
+            st.caption(f"▲▼ Reversal arrows active on {_n_arrows} of "
+                       f"{len(qd['points'])} tickers (TD exhaustion / >1.5σ "
+                       f"stretch within the last 5 bars).")
+        else:
+            st.caption("▲▼ No reversal arrows right now — none of your tickers "
+                       "currently show a fresh TD Setup 9, a late Countdown, or "
+                       ">1.5σ stretch. That's the normal state most days; these "
+                       "flags are rare by design. (TD data needs a recent "
+                       "⟳ Update trading data.)")
         if qd["excluded"]:
             st.caption(f"Not plottable (no corridor fair value / insufficient "
                        f"history): {', '.join(qd['excluded'])} — listed rather "

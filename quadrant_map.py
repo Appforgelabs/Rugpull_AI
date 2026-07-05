@@ -80,6 +80,11 @@ def build_points(snaps: dict, timeframe: str = "medium",
             net = sg.get("net_score")
             if net is not None:
                 raw = float(net) * 20.0
+                # continuous daily-RSI tilt: breaks the integer-vote ties that
+                # otherwise stack tickers into identical-x columns
+                rsi_d = trading.get("rsi_D")
+                if rsi_d is not None:
+                    raw += (float(rsi_d) - 50.0) * 0.35
                 td = trading.get("demark") or {}
                 for s in (td.get("recent_setups") or []):
                     if s.get("bars_ago", 99) <= 5:
@@ -146,7 +151,7 @@ def build_points(snaps: dict, timeframe: str = "medium",
     _spread(points)
 
     xlabels = {
-        "short": "short-term trend score (weighted votes, TD-nudged · mostly lagging)",
+        "short": "short-term score (weighted votes + daily-RSI tilt, TD-nudged · mostly lagging)",
         "medium": "P(up in 21 days) from bootstrap of own returns (odds, not forecast)",
         "long": "6-month momentum + trend position (persistence factor)",
     }
