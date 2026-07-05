@@ -87,15 +87,17 @@ def scan_ideas(snaps: dict, macro: dict | None, *, direction="both",
 
         # relative strength (leading-ish)
         if rs is not None:
-            pts = max(-10.0, min(15.0, side * rs * 0.75))
+            pts = max(-8.0, min(10.0, side * rs * 0.5))
             ev.append(("Rel strength vs SPY", round(pts, 1), "leading",
-                       f"{rs:+.1f}% over 63d"))
+                       f"{rs:+.1f}% over 63d (persists short-term)"))
 
-        # corridor valuation gap (leading)
+        # corridor valuation gap — a 12-MONTH anchor: at a ≤2-week horizon
+        # valuation has ~no predictive power, so it's context, not a driver
         if upside is not None:
-            pts = max(-10.0, min(15.0, side * upside * 0.3))
-            ev.append(("Corridor gap", round(pts, 1), "leading",
-                       f"{upside:+.0f}% to fair value"))
+            pts = max(-4.0, min(4.0, side * upside * 0.08))
+            ev.append(("Corridor gap (context)", round(pts, 1), "context",
+                       f"{upside:+.0f}% to fair value — 12-mo anchor, weak at "
+                       f"2-wk horizon"))
 
         # bootstrap P(up) from the ticker's own return history (probabilistic)
         p_up = None
@@ -104,11 +106,11 @@ def scan_ideas(snaps: dict, macro: dict | None, *, direction="both",
         if len(closes) >= 80:
             try:
                 import scenario_engine as SE
-                sim = SE.simulate(closes, horizon=21, n_paths=200, seed=7)
+                sim = SE.simulate(closes, horizon=10, n_paths=200, seed=7)
                 if sim.get("ok"):
                     p_up = sim["prob_above_spot"]
                     pts = max(-12.0, min(12.0, side * (p_up - 50) * 0.6))
-                    ev.append(("Bootstrap P(up 21d)", round(pts, 1), "leading",
+                    ev.append(("Bootstrap P(up 10d)", round(pts, 1), "leading",
                                f"{p_up:.0f}% of simulated paths end up"))
             except Exception:
                 pass
@@ -147,10 +149,10 @@ def scan_ideas(snaps: dict, macro: dict | None, *, direction="both",
         # mean-reversion timing: reward pullback-in-trend, penalize chasing
         if stretch is not None:
             if side * stretch <= -0.8:
-                ev.append(("Pullback entry", 8.0, "timing",
+                ev.append(("Pullback entry", 9.0, "timing",
                            f"stretch {stretch:+.2f} against bias"))
             elif side * stretch >= 1.5:
-                ev.append(("Chasing extended move", -8.0, "timing",
+                ev.append(("Chasing extended move", -9.0, "timing",
                            f"stretch {stretch:+.2f} with bias"))
 
         # TD Sequential exhaustion (counter-trend timing)
@@ -161,14 +163,19 @@ def scan_ideas(snaps: dict, macro: dict | None, *, direction="both",
             cd = td.get("countdown") or {}
             for x in fresh[-1:]:
                 if (x["side"] == "BUY") == (side > 0):
-                    ev.append(("TD exhaustion for entry", 7.0, "timing",
+                    pts = 12.0 if x.get("perfected") else 10.0
+                    ev.append(("TD exhaustion for entry", pts, "timing",
                                f"TD {x['side']} 9 · {x['bars_ago']}b ago"
                                + (" perfected" if x.get("perfected") else "")))
                 else:
-                    ev.append(("TD exhaustion against entry", -6.0, "timing",
+                    ev.append(("TD exhaustion against entry", -9.0, "timing",
                                f"TD {x['side']} 9 {x['bars_ago']}b ago"))
-            if cd.get("count", 0) >= 11:
-                pts = 5.0 if (cd["side"] == "BUY") == (side > 0) else -5.0
+            if cd.get("complete"):
+                pts = 9.0 if (cd["side"] == "BUY") == (side > 0) else -9.0
+                ev.append(("TD Countdown 13 complete", pts, "timing",
+                           f"{cd['side']} 13/13 — deep exhaustion"))
+            elif cd.get("count", 0) >= 11:
+                pts = 7.0 if (cd["side"] == "BUY") == (side > 0) else -7.0
                 ev.append(("TD Countdown late", pts, "timing",
                            f"{cd['side']} {cd['count']}/13"))
 
@@ -177,7 +184,18 @@ def scan_ideas(snaps: dict, macro: dict | None, *, direction="both",
         if hr is not None:
             pts = max(-10.0, min(10.0, (hr - 0.5) * 80))
             ev.append(("Measured hit-rate", round(pts, 1), "measured",
-                       f"{hr*100:.0f}% on scored calls"))
+                       f"{hr*100:.0f}% on scored calls (7d scoring — matches "
+                       f"this horizon)"))
+
+        # asymmetric setup bonus: planned R:R >= 2 from the lane's levels
+        su = (lane.get("setup") or {})
+        try:
+            rr_v = float(str(su.get("rr", "")).rstrip("Rr"))
+        except (TypeError, ValueError):
+            rr_v = None
+        if rr_v and rr_v >= 2.0:
+            ev.append(("Asymmetric setup", 4.0, "positioning",
+                       f"planned R:R {rr_v:.1f} (entry/stop/target)"))
 
         # trend strength — small, and honestly tagged lagging
         if adx and adx >= 25:
@@ -210,12 +228,14 @@ def scan_ideas(snaps: dict, macro: dict | None, *, direction="both",
 
     out = {"regime": regime, "timeframe": timeframe,
            "generated": dt.datetime.now().strftime("%Y-%m-%d %H:%M"),
-           "note": "Ranked by setup quality: trend is only the gate (lagging); "
-                   "the score favors leading evidence (RS, valuation gap, "
-                   "bootstrap odds, sentiment, regime), entry positioning "
-                   "(volume shelves, pullback vs chase) and the ledger's "
-                   "MEASURED hit-rates. Candidates to investigate — not "
-                   "endorsed trades, and not predictions."}
+           "note": "SHORT-TERM ideas (horizon ≤ 2 weeks). Trend is only the "
+                   "gate (lagging); the score favors horizon-appropriate "
+                   "evidence: TD exhaustion, pullback-vs-chase, volume-shelf "
+                   "positioning, 10-day bootstrap odds, RS, sentiment, regime, "
+                   "and the ledger's MEASURED 7-day hit-rates. The corridor "
+                   "gap is shown as context only — a 12-month valuation anchor "
+                   "says little about the next two weeks. Candidates to "
+                   "investigate — not endorsed trades, not predictions."}
     if direction in ("both", "long"):
         out["longs"] = longs
     if direction in ("both", "short"):
@@ -265,6 +285,7 @@ def deep_dive(snap: dict, macro: dict | None) -> dict:
             "vwap": trading.get("vwap_session") or trading.get("vwap_roll20"),
         },
         "volume_shelves": trading.get("vp"),
+        "demark": trading.get("demark"),
         "rel_strength": trading.get("rel_strength"),
         "sentiment": (result.get("sentiment") or {}).get("score"),
         "macro": {"regime": (macro or {}).get("regime"),
@@ -351,6 +372,26 @@ def deep_dive_markdown(d: dict) -> str:
         L.append(f"- POC {vp.get('poc','—')} · support {vp.get('support','—')} · "
                  f"overhead {vp.get('resistance','—')} · supply above "
                  f"{vp.get('overhead_pct','—')}%\n")
+    td = d.get("demark") or {}
+    if td.get("ok"):
+        L.append("## TD Sequential (exhaustion — unofficial published rules)")
+        if td.get("read"):
+            L.append(f"- **{td['read']}**")
+        elif td.get("setup_count"):
+            L.append(f"- {td['setup_side']} setup {td['setup_count']}/9 in progress")
+        else:
+            L.append("- No active setup")
+        for x in (td.get("recent_setups") or [])[-3:]:
+            L.append(f"- {x.get('side','?')} 9 on {x.get('date','?')} "
+                     f"({x.get('bars_ago','?')}b ago)"
+                     + (" · perfected" if x.get("perfected") else "")
+                     + (f" · TDST {x.get('tdst')}" if x.get("tdst") else ""))
+        cd = td.get("countdown") or {}
+        if cd:
+            L.append(f"- Countdown: {cd.get('side')} {cd.get('count')}/13"
+                     + (" — COMPLETE" if cd.get("complete") else ""))
+        L.append("- *Counter-trend flags (fail in strong trends); hit-rate "
+                 "measured by the prediction ledger.*\n")
 
     rs = d.get("rel_strength") or {}
     if rs.get("ok"):
@@ -366,11 +407,20 @@ def deep_dive_markdown(d: dict) -> str:
         L.append(f"- News sentiment: {d['sentiment']}/100\n")
 
     L.append("## Why this bias (signal votes)")
-    L.append("| Signal | Vote | Lag | Note |")
-    L.append("|---|---|---|---|")
+    _has_w = any(vt.get("weight") not in (None, 1.0) for vt in s.get("votes", []))
+    if _has_w:
+        L.append("| Signal | Vote | Learned weight | Lag | Note |")
+        L.append("|---|---|---|---|---|")
+    else:
+        L.append("| Signal | Vote | Lag | Note |")
+        L.append("|---|---|---|---|")
     for vt in s.get("votes", []):
         arrow = "↑" if vt["vote"] > 0 else "↓" if vt["vote"] < 0 else "·"
-        L.append(f"| {vt['signal']} | {arrow} | {vt.get('lag','')} | {vt.get('note','')} |")
+        if _has_w:
+            L.append(f"| {vt['signal']} | {arrow} | {vt.get('weight', 1.0)}× | "
+                     f"{vt.get('lag','')} | {vt.get('note','')} |")
+        else:
+            L.append(f"| {vt['signal']} | {arrow} | {vt.get('lag','')} | {vt.get('note','')} |")
     L.append("\n*Trend votes are deduplicated; oscillator stretch shown separately, "
              "not counted in the trend score.*")
     return "\n".join(L)
@@ -410,7 +460,7 @@ def scan_markdown(scan: dict) -> str:
         if not rows:
             L.append("_None currently match._\n")
             continue
-        L.append("| Ticker | Setup | Price | P(up 21d) | Upside | RS vs SPY | Conv % |")
+        L.append("| Ticker | Setup | Price | P(up 10d) | Upside | RS vs SPY | Conv % |")
         L.append("|---|---|---|---|---|---|---|")
         for r in rows:
             L.append(f"| {r['symbol']} | {r['setup_score']} | {r.get('price','—')} | "
