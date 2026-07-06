@@ -17,7 +17,13 @@ import numpy as np
 
 
 def simulate(closes: list[float], horizon: int = 21, n_paths: int = 400,
-             block: int = 5, lookback: int = 504, seed: int | None = None) -> dict:
+             block: int = 5, lookback: int = 504, seed: int | None = None,
+             demean: bool = False, targets: dict | None = None) -> dict:
+    """demean=True removes the historical average return (drift) from the
+    resampled blocks — volatility, fat tails and autocorrelation survive, but
+    the fan no longer inherits the past's direction. Use it to separate 'what
+    the volatility allows' from 'what momentum did'. targets: optional
+    {label: price} → P(path ends above each price)."""
     closes = [c for c in closes if c and c == c]
     if len(closes) < 80:
         return {"ok": False, "note": "need >=80 closes"}
@@ -25,10 +31,15 @@ def simulate(closes: list[float], horizon: int = 21, n_paths: int = 400,
     rets = np.diff(np.log(px))[-lookback:]
     if len(rets) < 40:
         return {"ok": False, "note": "insufficient returns"}
+    drift_daily = float(rets.mean())
+    if demean:
+        rets = rets - drift_daily
 
     rng = np.random.default_rng(seed)
     n_blocks = int(np.ceil(horizon / block))
-    starts_max = len(rets) - block
+    # +1: high end is exclusive — without it the newest return could never
+    # be sampled (off-by-one that excluded the most recent information)
+    starts_max = len(rets) - block + 1
     spot = float(px[-1])
 
     paths = np.empty((n_paths, horizon))
@@ -44,8 +55,15 @@ def simulate(closes: list[float], horizon: int = 21, n_paths: int = 400,
     terminal = paths[:, -1]
 
     sample_idx = rng.choice(n_paths, size=min(24, n_paths), replace=False)
+    target_probs = {}
+    for label, tp in (targets or {}).items():
+        if tp and tp > 0:
+            target_probs[label] = round(float((terminal > tp).mean()) * 100, 1)
     return {
         "ok": True, "spot": round(spot, 2), "horizon": horizon,
+        "drift_ann_pct": round(drift_daily * 252 * 100, 1),
+        "demeaned": bool(demean),
+        "target_probs": target_probs,
         "n_paths": n_paths,
         "pct": {k: [round(float(x), 2) for x in v] for k, v in pct.items()},
         "samples": [[round(float(x), 2) for x in paths[i]] for i in sample_idx],
@@ -53,9 +71,12 @@ def simulate(closes: list[float], horizon: int = 21, n_paths: int = 400,
         "median_end": round(float(np.median(terminal)), 2),
         "p10_end": round(float(np.percentile(terminal, 10)), 2),
         "p90_end": round(float(np.percentile(terminal, 90)), 2),
-        "note": "Block-bootstrap of this ticker's own past returns. The spread "
-                "of paths is the message: it is the realistic range of nearby "
-                "futures given how this stock has actually moved.",
+        "note": ("Block-bootstrap of this ticker's own past returns. "
+                 + ("Historical drift REMOVED — pure volatility view. "
+                    if demean else
+                    "Includes the stock's historical drift (momentum-informed "
+                    "— the past's direction tilts the fan). ")
+                 + "The spread of paths is the message."),
     }
 
 

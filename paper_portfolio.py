@@ -147,6 +147,7 @@ def rebalance(p, ranked_syms: list[str], prices: dict, force=False) -> dict:
         invested = total_equity
         p["spy_units"] = invested / spy_px
         p["spy_anchor"] = spy_px
+        p["spy_basis"] = round(invested, 2)   # exact dollars the SPY leg started with
 
     return {"acted": True, "roster": roster, "cash": round(p["cash"], 2),
             "target_each": round(target_each, 2)}
@@ -174,15 +175,18 @@ def performance(p, prices: dict) -> dict:
     spy_px = prices.get("SPY")
     if spy_px and p["spy_units"]:
         spy_now = p["spy_units"] * spy_px
-        # SPY equivalent started at the same invested dollars (≈START_CASH)
-        spy_ret = (spy_now / START_CASH - 1) * 100
+        spy_basis = p.get("spy_basis") or START_CASH
+        spy_ret = (spy_now / spy_basis - 1) * 100
 
     def window_ret(days):
         if len(p["history"]) < 2:
             return None
         cutoff = (dt.date.today() - dt.timedelta(days=days)).isoformat()
         past = [h for h in p["history"] if h["date"] <= cutoff]
-        base = past[-1] if past else p["history"][0]
+        if not past:
+            return None   # not enough history for this window — show "—",
+                          # never silently substitute since-inception
+        base = past[-1]
         if not base["value"]:
             return None
         return round((val / base["value"] - 1) * 100, 2)
