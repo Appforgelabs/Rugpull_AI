@@ -58,7 +58,7 @@ def _corr_upside(result: dict) -> float | None:
 
 
 def build_points(snaps: dict, timeframe: str = "medium",
-                 min_composite: int = 0, favorites: set | None = None) -> dict:
+                 min_composite: int = 0) -> dict:
     """Returns {points: [...], excluded: [...], xlabel, note}."""
     points, excluded = [], []
     for sym, snap in snaps.items():
@@ -142,7 +142,6 @@ def build_points(snaps: dict, timeframe: str = "medium",
 
         points.append({
             "sym": sym, "x": round(x, 1), "y": round(y, 1),
-            "fav": bool(favorites and sym in favorites),
             "bias": bias, "composite": composite,
             "price": trading.get("price") or result.get("price"),
             "gap": round(up, 1),
@@ -227,8 +226,7 @@ def render_quadrant_html(data: dict, height: int = 480) -> str:
     for(let g=0;g<3;g++){{arrow(lx,ly+1,1,GC[g]);lx+=13;}}
     ctx.fillStyle='#8899aa';ctx.fillText('up',lx+2,ly);lx+=28;
     for(let g=0;g<3;g++){{arrow(lx,ly-8,-1,RC[g]);lx+=13;}}
-    ctx.fillStyle='#8899aa';ctx.fillText('down · brighter = stronger · none = neutral',lx+2,ly);lx+=250;
-    ctx.fillStyle='#f0c85a';ctx.fillText('★ favorite (glow)',lx,ly);
+    ctx.fillStyle='#8899aa';ctx.fillText('down · brighter = stronger · none = neutral',lx+2,ly);
     ctx.save();ctx.translate(14,padT+plotH/2);ctx.rotate(-Math.PI/2);
     ctx.fillText('← INEXPENSIVE   (price vs corridor fair value)   EXPENSIVE →',0,0);
     ctx.restore();
@@ -241,13 +239,7 @@ def render_quadrant_html(data: dict, height: int = 480) -> str:
     for(const p of pts){{
       const x=X(Math.max(-XR,Math.min(XR,p.x))), y=Y(Math.max(-YR,Math.min(YR,p.y)));
       const col=p.bias==='LONG'?'#3fb37f':p.bias==='SHORT'?'#d6504f':'#8899aa';
-      if(p.fav){{
-        const gg=ctx.createRadialGradient(x,y,1,x,y,13);
-        gg.addColorStop(0,'rgba(240,200,90,0.55)');
-        gg.addColorStop(1,'rgba(240,200,90,0)');
-        ctx.beginPath();ctx.arc(x,y,13,0,7);ctx.fillStyle=gg;ctx.fill();
-      }}
-      ctx.beginPath();ctx.arc(x,y,p.fav?5.5:4.5,0,7);ctx.fillStyle=col;ctx.globalAlpha=.9;
+      ctx.beginPath();ctx.arc(x,y,4.5,0,7);ctx.fillStyle=col;ctx.globalAlpha=.9;
       ctx.fill();ctx.globalAlpha=1;
       if(p.rev){{
         const g=Math.min(3,Math.abs(p.rev))-1;
@@ -266,8 +258,7 @@ def render_quadrant_html(data: dict, height: int = 480) -> str:
            && !overlaps(r)){{lx=cx;ly=cy;ok=true;placed.push(r);break;}}
       }}
       if(!ok) placed.push({{x1:lx-1,y1:ly-th,x2:lx+tw+1,y2:ly+2}});
-      ctx.fillStyle=p.fav?'#f0c85a':'#aebccd';
-      ctx.fillText((p.fav?'\u2605':'')+p.sym,lx,ly);
+      ctx.fillStyle='#aebccd';ctx.fillText(p.sym,lx,ly);
       px.push({{x,y,p}});
     }}
   }}
