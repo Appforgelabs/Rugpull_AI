@@ -4,7 +4,7 @@ streamlit_app.py — Rugpull_AI
 Minimalist analyzer with stored snapshots. Data is fetched ONLY when you hit
 Update for a ticker (or Update all). Everything else reads instantly from the
 on-disk snapshot — no lag, no re-fetch on tab switches or slider drags.
-1
+
 Tabs:
   • Analyzer       — fundamentals table + composite + prediction zone chart
   • Corridor Chart — your original chart, embedded (load on demand)
