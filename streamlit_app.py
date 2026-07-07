@@ -1543,8 +1543,16 @@ if tab_map is not None:
 
         snaps = {s: SS.load_snapshot(s) for s in syms}
         snaps = {k: v for k, v in snaps.items() if v}
-        qd = QM.build_points(snaps, timeframe=tf, min_composite=min_comp,
-                             favorites=set(st.session_state.favorites))
+        import inspect as _insp
+        if "favorites" in _insp.signature(QM.build_points).parameters:
+            qd = QM.build_points(snaps, timeframe=tf, min_composite=min_comp,
+                                 favorites=set(st.session_state.favorites))
+        else:
+            st.error("⚠ STALE FILE: the deployed quadrant_map.py is an older "
+                     "version without favorites support. Re-upload the latest "
+                     "quadrant_map.py, reboot the app, hard-refresh. "
+                     "Rendering without favorite glow for now.")
+            qd = QM.build_points(snaps, timeframe=tf, min_composite=min_comp)
         st.components.v1.html(
             '<meta charset="utf-8">' + QM.render_quadrant_html(qd), height=500)
 
