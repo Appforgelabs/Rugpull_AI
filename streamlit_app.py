@@ -117,6 +117,8 @@ if "watchlist" not in st.session_state:
     st.session_state.watchlist = W.load_watchlist()
 if "starred" not in st.session_state:
     st.session_state.starred = []
+if "favorites" not in st.session_state:
+    st.session_state.favorites = []   # simple symbol list — for spot-ability
 # one-time auto-pull from cloud so progress follows you across computers
 if "cloud_pulled" not in st.session_state:
     st.session_state.cloud_pulled = True
@@ -130,6 +132,8 @@ if "cloud_pulled" not in st.session_state:
                     st.session_state.watchlist = blob["watchlist"]
                 if blob.get("starred"):
                     st.session_state.starred = blob["starred"]
+                if blob.get("favorites") is not None:
+                    st.session_state.favorites = blob["favorites"]
         except Exception:
             pass  # silent on startup; manual sync surfaces errors
 
@@ -173,6 +177,38 @@ _inactive = set(st.session_state.app_settings.get("inactive") or [])
 # skipped by analysis until re-enabled.
 syms = [s for s in syms_all if s not in _inactive]
 
+# ---- favorites (symbol set for spot-ability, synced to the Sheet) ----------
+def _fav_save():
+    try:
+        import cloud_sync as _CS
+        blob = _CS.load_blob(get_cloud_url(), "rugpull") or {}
+        blob["favorites"] = st.session_state.favorites
+        _CS.save_blob(get_cloud_url(), "rugpull", blob)
+    except Exception:
+        pass
+
+def is_fav(sym):
+    return sym in st.session_state.favorites
+
+def fav_toggle(sym, key_prefix=""):
+    """Inline ★/☆ button — click to add/remove a favorite. Returns nothing;
+    reruns on change so markers refresh everywhere."""
+    on = is_fav(sym)
+    label = "★" if on else "☆"
+    if st.button(label, key=f"fav_{key_prefix}_{sym}",
+                 help="Remove favorite" if on else "Mark favorite"):
+        if on:
+            st.session_state.favorites = [
+                s for s in st.session_state.favorites if s != sym]
+        else:
+            st.session_state.favorites = st.session_state.favorites + [sym]
+        _fav_save()
+        st.rerun()
+
+def fav_mark(sym):
+    """Return '★ ' prefix if favorite, else '' — for table cells/labels."""
+    return "★ " if is_fav(sym) else ""
+
 # ---- 🔎 find-anything search (type → match → full profile inline) ----------
 _q = st.text_input("search",
                    placeholder="🔎 Find any ticker or company… then press Enter",
@@ -198,8 +234,9 @@ if _q and _q.strip():
         _px = _trd.get("price") or _res.get("price")
         _up = (round((_corr["fair"] - _px) / _px * 100, 1)
                if _corr.get("ok") and _corr.get("fair") and _px else None)
+        fav_toggle(_sel, "search")
         _paused = " · ⏸ PAUSED" if _sel in _inactive else ""
-        st.markdown(f"#### {_sel} — {_res.get('company', _names.get(_sel, _sel))}"
+        st.markdown(f"#### {fav_mark(_sel)}{_sel} — {_res.get('company', _names.get(_sel, _sel))}"
                     f"{_paused}  <span class='muted'>({SS.age_str(_snp) if _snp else 'no data'})</span>",
                     unsafe_allow_html=True)
         if not (_res or _trd):
@@ -720,7 +757,7 @@ if tab_trade is not None:
 
             for r in trows:
                 sg = r.get("signal", {})
-                with st.expander(f"{r['symbol']} · {_arrow(sg.get('direction'))} · "
+                with st.expander(f"{fav_mark(r['symbol'])}{r['symbol']} · {_arrow(sg.get('direction'))} · "
                                  f"{sg.get('probability')}% · "
                                  f"{sg.get('bull_votes')}↑/{sg.get('bear_votes')}↓"):
                     if not r.get("intraday_available"):
@@ -776,6 +813,12 @@ if tab_trade is not None:
                                     unsafe_allow_html=True)
 
                     # volume-at-price shelves (disposition-effect zones)
+                    _fc1, _fc2 = st.columns([1, 11])
+                    with _fc1:
+                        fav_toggle(r["symbol"], "trade")
+                    with _fc2:
+                        st.caption("★ favorite" if is_fav(r["symbol"])
+                                   else "click ☆ to favorite")
                     vp = r.get("vp")
                     if vp:
                         st.markdown("**Volume shelves** "
@@ -917,7 +960,7 @@ if tab_research is not None:
             st.bar_chart(_pd.DataFrame(price_cmp).T, height=300)
 
             st.markdown("**Ranking table**")
-            tbl = [{"#": r["rank_corridor"], "Ticker": r["ticker"],
+            tbl = [{"#": r["rank_corridor"], "Ticker": fav_mark(r["ticker"]) + r["ticker"],
                     "Company": r["company"], "Price": r["price"],
                     "Fair value": r["fair_value"],
                     "Upside %": r["corridor_upside"],
@@ -1273,7 +1316,7 @@ if tab_report is not None:
             if "longs" in scan:
                 st.markdown(f"### 🟢 LONG candidates ({len(scan['longs'])})")
                 if scan["longs"]:
-                    st.dataframe([{"Ticker": r["symbol"], "Setup": r["setup_score"],
+                    st.dataframe([{"Ticker": fav_mark(r["symbol"]) + r["symbol"], "Setup": r["setup_score"],
                                    "Price": r.get("price"),
                                    "P(up 21d)": r.get("p_up"),
                                    "Upside %": r.get("upside"),
@@ -1283,7 +1326,7 @@ if tab_report is not None:
                                   for r in scan["longs"]],
                                  use_container_width=True, hide_index=True)
                     for r in scan["longs"][:6]:
-                        with st.expander(f"{r['symbol']} — setup {r['setup_score']} (why)"):
+                        with st.expander(f"{fav_mark(r['symbol'])}{r['symbol']} — setup {r['setup_score']} (why)"):
                             for e in r["evidence"]:
                                 st.markdown(f"`{e['pts']:+6.1f}` **{e['factor']}** "
                                             f"— {e['note']} · *{e['tag']}*")
@@ -1292,7 +1335,7 @@ if tab_report is not None:
             if "shorts" in scan:
                 st.markdown(f"### 🔴 SHORT candidates ({len(scan['shorts'])})")
                 if scan["shorts"]:
-                    st.dataframe([{"Ticker": r["symbol"], "Setup": r["setup_score"],
+                    st.dataframe([{"Ticker": fav_mark(r["symbol"]) + r["symbol"], "Setup": r["setup_score"],
                                    "Price": r.get("price"),
                                    "P(up 21d)": r.get("p_up"),
                                    "Upside %": r.get("upside"),
@@ -1301,7 +1344,7 @@ if tab_report is not None:
                                   for r in scan["shorts"]],
                                  use_container_width=True, hide_index=True)
                     for r in scan["shorts"][:6]:
-                        with st.expander(f"{r['symbol']} — setup {r['setup_score']} (why)"):
+                        with st.expander(f"{fav_mark(r['symbol'])}{r['symbol']} — setup {r['setup_score']} (why)"):
                             for e in r["evidence"]:
                                 st.markdown(f"`{e['pts']:+6.1f}` **{e['factor']}** "
                                             f"— {e['note']} · *{e['tag']}*")
@@ -1500,7 +1543,8 @@ if tab_map is not None:
 
         snaps = {s: SS.load_snapshot(s) for s in syms}
         snaps = {k: v for k, v in snaps.items() if v}
-        qd = QM.build_points(snaps, timeframe=tf, min_composite=min_comp)
+        qd = QM.build_points(snaps, timeframe=tf, min_composite=min_comp,
+                             favorites=set(st.session_state.favorites))
         st.components.v1.html(
             '<meta charset="utf-8">' + QM.render_quadrant_html(qd), height=500)
 
