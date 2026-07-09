@@ -60,17 +60,12 @@ def monthly_grid(rows: list[tuple[str, float]], n_prior_years: int = 5) -> dict:
     cy, cm = today.year, today.month
     years = list(range(cy, cy - n_prior_years - 1, -1))   # current + N prior
     grid = {y: {m: rets.get((y, m)) for m in range(1, 13)} for y in years}
-    # current month is in progress — mark it but don't show a fake full-month
-    # number if the month isn't complete (use month-to-date vs last EOM)
-    if (cy, cm) in eom and (cy, cm - 1) in eom or (cm == 1 and (cy - 1, 12) in eom):
-        pass  # rets already computed treats latest close as month-end (MTD)
 
     complete = [y for y in years[1:]][:n_prior_years]     # the N prior years
     avg = {}
     for m in range(1, 13):
         vals = [grid[y][m] for y in complete if grid[y].get(m) is not None]
-        avg[m] = round(sum(vals) / len(vals), 2) if len(vals) == len(complete) else (
-            round(sum(vals) / len(vals), 2) if vals else None)
+        avg[m] = round(sum(vals) / len(vals), 2) if vals else None
 
     # blank out future months of the current year
     for m in range(cm + 1, 13):

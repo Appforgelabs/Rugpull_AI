@@ -433,7 +433,7 @@ ALL_TABS = [("⬢ Dashboard", "tab_dash"), ("Analyzer", "tab1"),
             ("Report", "tab_report"), ("Macro", "tab_macro"),
             ("Backtest", "tab_bt"), ("Learn", "tab_learn"),
             ("Corridor Chart", "tab2"), ("Map", "tab_map"),
-            ("⚙ Settings", "tab_set")]
+            ("Seasonality", "tab_seas"), ("⚙ Settings", "tab_set")]
 _visible = st.session_state.app_settings.get("visible_tabs") or [n for n, _ in ALL_TABS]
 _visible = [n for n, _ in ALL_TABS if n in _visible] or [n for n, _ in ALL_TABS]
 if "⚙ Settings" not in _visible:      # can never be hidden — it's the way back
@@ -441,7 +441,7 @@ if "⚙ Settings" not in _visible:      # can never be hidden — it's the way b
 _created = st.tabs(_visible)
 _lookup = dict(zip(_visible, _created))
 tab_dash, tab1, tab_trade, tab_sc, tab_research, tab_paper, tab_report, \
-    tab_macro, tab_bt, tab_learn, tab2, tab_map, tab_set = (
+    tab_macro, tab_bt, tab_learn, tab2, tab_map, tab_seas, tab_set = (
         _lookup.get(n) for n, _ in ALL_TABS)
 
 if tab_dash is not None:
@@ -1582,6 +1582,44 @@ if tab_map is not None:
                        f"history): {', '.join(qd['excluded'])} — listed rather "
                        f"than faked.")
 
+
+if tab_seas is not None:
+    with tab_seas:
+        try:
+            import seasonality as SEA
+        except ImportError:
+            SEA = None
+            st.error("seasonality.py is missing from the repo — upload it to "
+                     "enable this tab. The rest of the app is unaffected.")
+        if SEA is not None:
+            st.caption("Monthly-return seasonality, five complete years + "
+                       "current (month-to-date), with the 5-year average per "
+                       "month. **Honest framing:** this is price seasonality "
+                       "of the index ETFs (n=5 per cell — a weak, noisy "
+                       "tendency), context for timing and sizing, never a "
+                       "signal on its own.")
+
+            @st.cache_data(ttl=21600, show_spinner="Loading index history…")
+            def _seas_cached(sym: str, day_key: str):
+                rows = SEA.fetch_daily(client, sym, years=7)
+                return SEA.monthly_grid(rows, n_prior_years=5)
+
+            _dk = dt.date.today().isoformat()
+            for _sym, _label in (
+                    ("SPY", "S&P 500 (SPY) — Monthly Return Seasonality"),
+                    ("QQQ", "Nasdaq-100 (QQQ) — Monthly Return Seasonality")):
+                try:
+                    _g = _seas_cached(_sym, _dk)
+                    st.components.v1.html(
+                        "<meta charset='utf-8'>"
+                        + SEA.render_heatmap_html(_label, _g), height=360)
+                except Exception as _e:
+                    st.warning(f"{_sym}: couldn't load seasonality — {_e}")
+            st.caption("Reading the current month: check the boxed column's "
+                       "5-yr average and the spread of the five cells beneath "
+                       "it — a consistent sign across years means more than "
+                       "the average; five mixed signs means the average is "
+                       "noise.")
 
 if tab_set is not None:
     with tab_set:
