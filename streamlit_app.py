@@ -467,7 +467,15 @@ with st.sidebar:
     tot = sum(w.values()) or 1.0
     A.WEIGHTS = {k: v / tot for k, v in w.items()}
 
-    macro = S.macro_regime(client)
+    @st.cache_data(ttl=900, show_spinner=False)
+    def _macro_cached(day_key: str):
+        return S.macro_regime(client)
+
+    try:
+        macro = _macro_cached(dt.date.today().isoformat())
+    except Exception:
+        macro = {"regime": "unknown", "tilt": 1.0,
+                 "note": "macro fetch failed — using neutral"}
     st.caption(f"Macro: {macro.get('regime','?')} · tilt ×{macro.get('tilt',1.0)}")
 
 # ---- tabs ------------------------------------------------------------------
