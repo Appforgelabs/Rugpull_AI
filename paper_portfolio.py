@@ -21,11 +21,13 @@ basket of the app's top-ranked names actually beat SPY over time?
 
 from __future__ import annotations
 import datetime as dt
+import time
 
 PAPER_KEY = "paper"
 START_CASH = 100_000.0
 N_HOLD = 12
-DROP_RANK = 15          # hysteresis: hold until it falls past this rank
+DROP_RANK = 20          # leadership boundary (used WITH trend loss, not alone)
+TARGET_N = 12           # target number of holdings
 REBALANCE_DAYS = 7      # weekly roster + equal-weight reset
 COMMISSION = 0.0005     # 5 bps per side, so paper P&L isn't artificially clean
 
@@ -47,7 +49,7 @@ def new_portfolio() -> dict:
 
 
 def _log(p, action, symbol, shares, price, note=""):
-    p["activity"].append({
+    p.setdefault("activity", []).append({
         "date": dt.date.today().isoformat(),
         "action": action, "symbol": symbol,
         "shares": round(shares, 3) if shares else None,
@@ -64,96 +66,148 @@ def portfolio_value(p, prices: dict) -> float:
     return round(v, 2)
 
 
-def _due_for_rebalance(p) -> bool:
-    if not p["last_rebalance"]:
-        return True
-    last = dt.date.fromisoformat(p["last_rebalance"])
-    return (dt.date.today() - last).days >= p["settings"]["rebalance_days"]
+def _breakdown(sym: str, snap: dict | None, rank: dict) -> str | None:
+    """Has THIS holding's thesis broken? Returns the reason, or None if the
+    conviction stands. Mild rank shuffling alone is NOT a breakdown."""
+    if not snap:
+        return "no data visibility (removed/paused in the app)"
+    trading = snap.get("trading") or {}
+    result = snap.get("result") or {}
+    fetched = trading.get("fetched_at") or result.get("fetched_at") or 0
+    if fetched and (time.time() - fetched) > 7 * 86400:
+        return "data stale >7 days — no visibility, no conviction"
+    sg = trading.get("signal") or {}
+    swing = (sg.get("swing") or {}).get("bias")
+    prob = sg.get("probability") or 50
+    if swing == "SHORT" and prob >= 60:
+        return f"trend broke against it (SHORT @ {prob}% agreement)"
+    comp = result.get("composite_score")
+    if comp is not None and comp < 35:
+        return f"quality collapsed (composite {comp})"
+    sent = (result.get("sentiment") or {}).get("score")
+    if sent is not None and sent < 30 and swing != "LONG":
+        return f"sentiment collapsed ({sent:.0f}) with no trend support"
+    r = rank.get(sym, 9999)
+    if r > DROP_RANK and swing != "LONG":
+        return f"fell out of leadership (rank {r}) and lost its trend"
+    return None
 
 
-def rebalance(p, ranked_syms: list[str], prices: dict, force=False) -> dict:
-    """ranked_syms: tickers ordered best->worst by adjusted upside (from the
-    Research screener). prices: {sym: live price}. Returns a summary."""
-    if not force and not _due_for_rebalance(p):
-        return {"acted": False, "reason": "not due (weekly cadence)"}
-    if not ranked_syms or not prices:
-        return {"acted": False, "reason": "no rankings/prices available"}
-
-    held = set(p["positions"].keys())
+def decide(p, ranked_syms: list[str], snaps: dict, macro: dict | None,
+           prices: dict, force=False) -> dict:
+    """Conviction-driven decisions — no calendar. Acts only when the data
+    changes: per-holding thesis breakdowns, macro regime shifts, or open
+    capacity with qualified candidates. Otherwise SITS ON HANDS (and logs it).
+    Exited names have a re-entry cooldown so the engine can't churn."""
+    today = dt.date.today().isoformat()
     rank = {s: i + 1 for i, s in enumerate(ranked_syms)}
-    top_n = [s for s in ranked_syms if s in prices][:N_HOLD]
+    mult = (macro or {}).get("risk_multiplier", 1.0)
+    regime = (macro or {}).get("regime", "?")
+    prev_mult = p.get("last_risk_mult")
+    acted = False
+    decisions = []
 
-    # 1) SELL holdings that fell past the hysteresis buffer OR lost their price
-    for sym in list(held):
-        r = rank.get(sym, 9999)
-        if r > DROP_RANK or sym not in prices:
-            pos = p["positions"].pop(sym)
-            px = prices.get(sym) or pos["avg_cost"]
+    def _note(kind, sym, why):
+        decisions.append({"date": today, "kind": kind, "symbol": sym, "why": why})
+
+    cooldown = p.setdefault("cooldown", {})     # sym -> exit date
+    def _cooling(sym):
+        d0 = cooldown.get(sym)
+        return bool(d0) and (dt.date.fromisoformat(today)
+                             - dt.date.fromisoformat(d0)).days < 5
+
+    # ---- 1) per-holding thesis check (incl. removed/paused tickers) ----
+    for sym in list(p["positions"]):
+        why = _breakdown(sym, snaps.get(sym), rank)
+        if why:
+            pos = p["positions"][sym]
+            px = prices.get(sym) or pos.get("last_price") or pos["avg_cost"]
             proceeds = pos["shares"] * px * (1 - COMMISSION)
             p["cash"] += proceeds
+            _log(p, "SELL", sym, pos["shares"], px, why)
+            _note("EXIT", sym, why)
+            cooldown[sym] = today
+            del p["positions"][sym]
+            acted = True
+
+    # ---- 2) macro regime shift ----
+    if prev_mult is not None and mult < 1.0 <= prev_mult and p["positions"]:
+        # deterioration: trim the two weakest holdings, hold the cash
+        def _strength(sym):
+            r0 = (snaps.get(sym) or {}).get("result") or {}
+            return r0.get("composite_score") or 0
+        weakest = sorted(p["positions"], key=_strength)[:2]
+        for sym in weakest:
+            pos = p["positions"][sym]
+            px = prices.get(sym) or pos.get("last_price") or pos["avg_cost"]
+            p["cash"] += pos["shares"] * px * (1 - COMMISSION)
             _log(p, "SELL", sym, pos["shares"], px,
-                 f"dropped to rank {r} (>{DROP_RANK})")
+                 f"macro risk-off trim ({regime})")
+            _note("TRIM", sym, f"macro turned risk-off ({regime}) — raising cash")
+            cooldown[sym] = today
+            del p["positions"][sym]
+            acted = True
+    p["last_risk_mult"] = mult
 
-    # 2) figure the target roster: keep held names still in top DROP_RANK,
-    #    fill open slots from the top_n list
-    keep = [s for s in p["positions"] if rank.get(s, 9999) <= DROP_RANK]
-    open_slots = N_HOLD - len(keep)
-    additions = [s for s in top_n if s not in keep][:open_slots]
-    roster = keep + additions
+    # ---- 3) deploy capacity into qualified candidates (risk-on/neutral) ----
+    open_slots = TARGET_N - len(p["positions"])
+    if open_slots > 0 and (mult >= 1.0 or force):
+        cands = []
+        for sym in ranked_syms:
+            if sym in p["positions"] or _cooling(sym) or sym not in prices:
+                continue
+            snap = snaps.get(sym) or {}
+            res = snap.get("result") or {}
+            sg = ((snap.get("trading") or {}).get("signal") or {})
+            comp = res.get("composite_score") or 0
+            swing = (sg.get("swing") or {}).get("bias")
+            sent = (res.get("sentiment") or {}).get("score")
+            if comp >= 45 and swing == "LONG" and (sent is None or sent >= 40):
+                cands.append(sym)
+            if len(cands) >= open_slots:
+                break
+        if cands:
+            per = (p["cash"] * 0.98) / max(len(cands), 1)
+            for sym in cands:
+                px = prices[sym]
+                shares = (per * (1 - COMMISSION)) / px
+                if shares * px < 100:      # ignore dust
+                    continue
+                p["cash"] -= shares * px * (1 + COMMISSION)
+                pos = p["positions"].setdefault(
+                    sym, {"shares": 0.0, "avg_cost": px})
+                pos["shares"] += shares
+                pos["avg_cost"] = px
+                pos["entry_date"] = today
+                _log(p, "BUY", sym, shares, px,
+                     f"qualified entry (rank {rank.get(sym)}, "
+                     f"regime {regime})")
+                _note("BUY", sym, f"rank {rank.get(sym)}, LONG trend, "
+                                  f"quality ok — deploying open capacity")
+                acted = True
 
-    # 3) equal-weight target value per name (based on total equity)
-    total_equity = portfolio_value(p, prices)
-    target_each = total_equity / max(len(roster), 1)
+    if not acted:
+        _note("HOLD", "—", f"no thesis broke, regime steady ({regime}) — "
+                           f"sitting on hands")
 
-    # 4) buy new names; trim/add existing to equal weight
-    for sym in roster:
-        px = prices.get(sym)
-        if not px:
-            continue
-        cur_shares = p["positions"].get(sym, {}).get("shares", 0.0)
-        cur_val = cur_shares * px
-        delta_val = target_each - cur_val
-        if abs(delta_val) < target_each * 0.02:   # within 2% — leave it
-            continue
-        delta_shares = delta_val / px
-        if delta_shares > 0:                        # buy/add
-            cost = delta_shares * px * (1 + COMMISSION)
-            if cost > p["cash"]:                    # cap at available cash
-                delta_shares = (p["cash"] / (px * (1 + COMMISSION)))
-                cost = p["cash"]
-            p["cash"] -= cost
-            if sym in p["positions"]:
-                pos = p["positions"][sym]
-                tot = pos["shares"] + delta_shares
-                pos["avg_cost"] = ((pos["avg_cost"] * pos["shares"]
-                                    + px * delta_shares) / tot) if tot else px
-                pos["shares"] = tot
-                _log(p, "ADD", sym, delta_shares, px, "rebalance to equal weight")
-            else:
-                p["positions"][sym] = {"shares": delta_shares, "avg_cost": px}
-                _log(p, "BUY", sym, delta_shares, px,
-                     f"entered top {N_HOLD} (rank {rank.get(sym)})")
-        else:                                       # trim
-            sh = min(-delta_shares, p["positions"][sym]["shares"])
-            p["positions"][sym]["shares"] -= sh
-            p["cash"] += sh * px * (1 - COMMISSION)
-            _log(p, "TRIM", sym, sh, px, "rebalance to equal weight")
+    dl = p.setdefault("decisions", [])
+    dl.extend(decisions)
+    del dl[:-120]                       # keep the last ~120 decisions
+    p["last_decide"] = today
+    return {"acted": acted, "decisions": decisions,
+            "roster": list(p["positions"])}
 
-    p["last_rebalance"] = dt.date.today().isoformat()
 
-    # anchor SPY benchmark to the same net invested dollars on first rebalance
-    spy_px = prices.get("SPY")
-    if spy_px and p["spy_anchor"] is None:
-        invested = total_equity
-        p["spy_units"] = invested / spy_px
-        p["spy_anchor"] = spy_px
-        p["spy_basis"] = round(invested, 2)   # exact dollars the SPY leg started with
-
-    return {"acted": True, "roster": roster, "cash": round(p["cash"], 2),
-            "target_each": round(target_each, 2)}
+def rebalance(p, ranked_syms, prices, force=False):
+    """Backward-compat shim for older callers: conviction engine without
+    snapshots/macro degrades to visibility+rank checks only."""
+    return decide(p, ranked_syms, {}, None, prices, force=force)
 
 
 def snapshot_value(p, prices: dict) -> None:
+    for _s, _pos in p.get("positions", {}).items():
+        if prices.get(_s):
+            _pos["last_price"] = prices[_s]
     """Append today's mark-to-market value + the dollar-matched SPY value."""
     today = dt.date.today().isoformat()
     val = portfolio_value(p, prices)

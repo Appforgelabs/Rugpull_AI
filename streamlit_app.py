@@ -1119,22 +1119,30 @@ if tab_paper is not None:
         ranked = [r["ticker"] for r in rk.get("by_adjusted", [])] if rk.get("ok") else []
 
         cc1, cc2, cc3 = st.columns([2, 2, 2])
-        auto_paper = cc1.toggle("Auto-rebalance weekly", value=True,
-                                help="When on, rebalances if 7+ days since last and "
-                                     "you run Update / open the tab.")
-        if cc2.button("⟳ Rebalance now", help="Force an immediate rebalance"):
+        auto_paper = cc1.toggle("Conviction engine (auto)", value=True,
+                                help="No calendar. Acts ONLY when the data "
+                                     "changes: a holding's thesis breaks "
+                                     "(trend/quality/sentiment/visibility), "
+                                     "the macro regime shifts, or there's "
+                                     "open capacity with qualified names. "
+                                     "Otherwise it sits on hands — and logs "
+                                     "that decision too.")
+        if cc2.button("⚖ Evaluate now", help="Run the conviction engine once, "
+                                             "immediately"):
             if not ranked:
                 st.error("No rankings yet — run ⟳ Update all so Research can rank.")
             elif not prices:
                 st.error("No prices — run ⟳ Update all.")
             else:
-                res = PP.rebalance(port, ranked, prices, force=True)
+                res = PP.decide(port, ranked, snaps, macro, prices, force=True)
                 PP.snapshot_value(port, prices)
                 sv = PP.save_portfolio(port, cloud)
                 if sv["cloud"]:
-                    st.success(f"Rebalanced & saved. Roster: {len(res.get('roster',[]))}")
+                    _n_act = sum(1 for d in res["decisions"] if d["kind"] != "HOLD")
+                    st.success(f"Evaluated & saved — {_n_act} action(s), "
+                               f"{len(res.get('roster', []))} holdings.")
                 else:
-                    st.warning(f"Rebalanced but NOT saved: {sv['error']}")
+                    st.warning(f"Evaluated but NOT saved: {sv['error']}")
                 st.rerun()
         if cc3.button("↺ Reset portfolio", help="Wipe and start fresh at $100k"):
             port = PP.new_portfolio()
@@ -1146,22 +1154,36 @@ if tab_paper is not None:
         # when a rebalance acted or on the first view of the day — not on every
         # widget interaction (each save is an Apps Script POST).
         if auto_paper and ranked and prices and safe_to_save:
-            res = PP.rebalance(port, ranked, prices, force=False)
             _today = dt.date.today().isoformat()
-            _have_today = any(h["date"] == _today for h in port["history"])
-            if res.get("acted"):
+            # evaluate at most once per day automatically (manual button anytime)
+            if port.get("last_decide") != _today:
+                res = PP.decide(port, ranked, snaps, macro, prices, force=False)
                 PP.snapshot_value(port, prices)
                 PP.save_portfolio(port, cloud)
-                st.info(f"Auto-rebalanced (weekly cadence). Roster: "
-                        f"{len(res.get('roster', []))} names.")
-            elif not _have_today:
-                # first view today — record the daily mark-to-market once
-                PP.snapshot_value(port, prices)
-                PP.save_portfolio(port, cloud)
+                if res.get("acted"):
+                    _acts = [d for d in res["decisions"] if d["kind"] != "HOLD"]
+                    st.info("Conviction engine acted: " + " · ".join(
+                        f"{d['kind']} {d['symbol']}" for d in _acts[:6]))
+            else:
+                _have_today = any(h["date"] == _today for h in port["history"])
+                if not _have_today:
+                    PP.snapshot_value(port, prices)
+                    PP.save_portfolio(port, cloud)
+
+        _dl = port.get("decisions", [])
+        if _dl:
+            with st.expander(f"🧭 Decision log ({len(_dl)} entries — includes "
+                             f"the sits-on-hands)"):
+                for d in reversed(_dl[-25:]):
+                    _icon = {"BUY": "🟢", "EXIT": "🔴", "TRIM": "🟠",
+                             "HOLD": "⚪"}.get(d["kind"], "·")
+                    st.markdown(f"`{d['date']}` {_icon} **{d['kind']}** "
+                                f"{d['symbol']} — {d['why']}")
 
         if not port["positions"]:
-            st.info("Portfolio is empty. Click **⟳ Rebalance now** to buy the top 12 "
-                    "ranked names (needs ⟳ Update all run first so Research can rank).")
+            st.info("Portfolio is empty. Click **⚖ Evaluate now** to deploy into "
+                    "qualified names (needs ⟳ Update all run first so Research "
+                    "can rank).")
         else:
             perf = PP.performance(port, prices)
             m1, m2, m3, m4, m5 = st.columns(5)
