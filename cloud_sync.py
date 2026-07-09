@@ -90,21 +90,6 @@ def save_blob(url: str, key: str, dataset: dict) -> dict:
     return data if isinstance(data, dict) else {"ok": True}
 
 
-def load_all(url: str) -> dict | None:
-    """ONE call returning every app blob {key: dataset}. Needs the __all__
-    route in Code.gs; returns None on older deployments (caller falls back
-    to individual loads)."""
-    if not _valid(url):
-        return None
-    try:
-        r = requests.get(url, params={"key": "__all__"}, timeout=TIMEOUT)
-        r.raise_for_status()
-        data = r.json()
-        return data.get("app_all") if isinstance(data, dict) else None
-    except Exception:
-        return None
-
-
 def load_app_state(url: str) -> dict | None:
     """Pull the saved {watchlist, starred} blob. Returns None if nothing saved
     or the script doesn't support the namespace yet."""

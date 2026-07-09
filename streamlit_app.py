@@ -119,48 +119,23 @@ if "starred" not in st.session_state:
     st.session_state.starred = []
 if "favorites" not in st.session_state:
     st.session_state.favorites = []   # simple symbol list — for spot-ability
-# one-time auto-pull from cloud so progress follows you across computers.
-# ONE bulk call (Code.gs __all__ route) instead of several sequential ones —
-# with a visible status line so a slow cloud is diagnosable, never a mystery.
+# one-time auto-pull from cloud so progress follows you across computers
 if "cloud_pulled" not in st.session_state:
     st.session_state.cloud_pulled = True
     _url = get_cloud_url()
     if _url:
-        _boot = st.empty()
-        _boot.info("☁ Loading your data from the cloud… (if this line sits "
-                   "here >30s, Google Apps Script is having a slow day — the "
-                   "app will proceed with defaults and you can ⬇ Load cloud "
-                   "from the sidebar later)")
-        import time as _t
-        _t0 = _t.time()
         try:
             import cloud_sync as CS
-            # getattr: if an older cloud_sync.py is deployed (split upload),
-            # fall through to the classic per-key loads instead of failing
-            _load_all = getattr(CS, "load_all", None)
-            _all = _load_all(_url) if _load_all else None
-            if _all is not None:
-                blob = _all.get("rugpull") or {}
-                _settings = _all.get("settings") or {}
-            else:
-                # old Code.gs without __all__ — fall back to per-key loads
-                blob = CS.load_app_state(_url) or {}
-                _settings = CS.load_blob(_url, "settings") or {}
-            if blob.get("watchlist"):
-                st.session_state.watchlist = blob["watchlist"]
-            if blob.get("starred"):
-                st.session_state.starred = blob["starred"]
-            if blob.get("favorites") is not None:
-                st.session_state.favorites = blob["favorites"]
-            st.session_state.app_settings = {"visible_tabs": None, "inactive": []}
-            st.session_state.app_settings.update(
-                {k: _settings.get(k) for k in ("visible_tabs", "inactive")
-                 if _settings.get(k) is not None})
-            _boot.empty()
-        except Exception as _e:
-            _boot.warning(f"☁ Cloud load failed after {_t.time()-_t0:.0f}s "
-                          f"({_e}) — running with defaults; use ⬇ Load cloud "
-                          f"in the sidebar to retry.")
+            blob = CS.load_app_state(_url)
+            if blob:
+                if blob.get("watchlist"):
+                    st.session_state.watchlist = blob["watchlist"]
+                if blob.get("starred"):
+                    st.session_state.starred = blob["starred"]
+                if blob.get("favorites") is not None:
+                    st.session_state.favorites = blob["favorites"]
+        except Exception:
+            pass  # silent on startup; manual sync surfaces errors
 
 st.title("Rugpull_AI")
 st.markdown('<div class="muted">Transparent scoring + σ-based probability zones. '
@@ -176,9 +151,16 @@ client = get_client(key)
 
 # ---- app settings (visible tabs + inactive tickers), persisted to the Sheet --
 if "app_settings" not in st.session_state:
-    # normally populated by the bulk boot load above; this is only the
-    # no-cloud fallback (no network here — boot already tried)
     st.session_state.app_settings = {"visible_tabs": None, "inactive": []}
+    try:
+        import cloud_sync as _CS
+        _blob = _CS.load_blob(get_cloud_url(), "settings")
+        if _blob:
+            st.session_state.app_settings.update(
+                {k: _blob.get(k) for k in ("visible_tabs", "inactive")
+                 if _blob.get(k) is not None})
+    except Exception:
+        pass
 
 def save_settings():
     try:
@@ -227,49 +209,6 @@ def fav_mark(sym):
     """Return '★ ' prefix if favorite, else '' — for table cells/labels."""
     return "★ " if is_fav(sym) else ""
 
-
-# ---- performance: caching layer -------------------------------------------
-# Streamlit reruns this WHOLE script on every widget interaction, and every
-# visible tab body executes. Uncached, one click cost 4-6 sequential HTTP
-# round-trips to Apps Script (ledger x3, paper, connection test) plus ~500
-# snapshot JSON parses. Everything below is cached with revision-busters so
-# data refreshes IMMEDIATELY after a save, and by mtime so updates are seen.
-
-import os as _os
-
-def _bump(name):
-    st.session_state[name] = st.session_state.get(name, 0) + 1
-
-@st.cache_data(show_spinner=False, max_entries=512)
-def _snap_cached(sym: str, mtime: float):
-    return load_snap(sym)
-
-def load_snap(sym: str):
-    """Snapshot load cached by file mtime — a fresh ⟳ Update writes the file,
-    changing mtime, which busts the cache automatically."""
-    try:
-        m = _os.path.getmtime(SS._path(sym))
-    except OSError:
-        m = 0.0
-    return _snap_cached(sym, m)
-
-@st.cache_data(ttl=180, show_spinner=False)
-def _ledger_cached(url: str, rev: int):
-    import prediction_tracker as _PTc
-    return _PTc.load_ledger(url)
-
-def load_ledger_fast():
-    return _ledger_cached(get_cloud_url() or "", st.session_state.get("ledger_rev", 0))
-
-@st.cache_data(ttl=120, show_spinner=False)
-def _paper_cached(url: str, rev: int):
-    import paper_portfolio as _PPc
-    return _PPc.load_portfolio(url)
-
-@st.cache_data(ttl=300, show_spinner=False)
-def _conn_cached(url: str):
-    import cloud_sync as _CSc
-    return _CSc.test_connection(url)
 
 
 # ---- 🔎 find-anything search (type → match → full profile inline) ----------
@@ -366,7 +305,7 @@ with st.sidebar:
     with st.expander(f"📋 {len(syms)} tickers", expanded=False):
         for i, t in enumerate(list(st.session_state.watchlist)):
             c1, c2 = st.columns([4, 1])
-            snap = load_snap(t["symbol"])
+            snap = SS.load_snapshot(t["symbol"])
             age = SS.age_str(snap) if snap else "no data"
             c1.write(f"**{t['symbol']}**  ·  {age}")
             if c2.button("✕", key=f"d{i}"):
@@ -391,7 +330,6 @@ with st.sidebar:
         try:
             import prediction_tracker as PT
             cyc = PT.auto_cycle(syms, SS.load_snapshot, get_cloud_url())
-            _bump('ledger_rev')
             sv = cyc.get("save", {})
             if sv.get("cloud"):
                 st.toast(f"✓ Ledger saved to cloud: +{cyc['recorded']} recorded, "
@@ -410,14 +348,14 @@ with st.sidebar:
             if _pst == "loaded" and _pp.get("positions"):
                 _ppx = {}
                 for _s in set(syms + ["SPY"]):
-                    _sn = load_snap(_s)
+                    _sn = SS.load_snapshot(_s)
                     _px = (((_sn or {}).get("trading") or {}).get("price")
                            or ((_sn or {}).get("result") or {}).get("price"))
                     if _px:
                         _ppx[_s] = _px
                 if _ppx:
                     PP.snapshot_value(_pp, _ppx)
-                    PP.save_portfolio(_pp, get_cloud_url()); _bump('paper_rev')
+                    PP.save_portfolio(_pp, get_cloud_url())
         except Exception:
             pass
         st.rerun()
@@ -485,15 +423,7 @@ with st.sidebar:
     tot = sum(w.values()) or 1.0
     A.WEIGHTS = {k: v / tot for k, v in w.items()}
 
-    @st.cache_data(ttl=900, show_spinner=False)
-    def _macro_cached(day_key: str):
-        return S.macro_regime(client)
-
-    try:
-        macro = _macro_cached(dt.date.today().isoformat())
-    except Exception:
-        macro = {"regime": "unknown", "tilt": 1.0,
-                 "note": "macro fetch failed — using neutral"}
+    macro = S.macro_regime(client)
     st.caption(f"Macro: {macro.get('regime','?')} · tilt ×{macro.get('tilt',1.0)}")
 
 # ---- tabs ------------------------------------------------------------------
@@ -503,7 +433,7 @@ ALL_TABS = [("⬢ Dashboard", "tab_dash"), ("Analyzer", "tab1"),
             ("Report", "tab_report"), ("Macro", "tab_macro"),
             ("Backtest", "tab_bt"), ("Learn", "tab_learn"),
             ("Corridor Chart", "tab2"), ("Map", "tab_map"),
-            ("Seasonality", "tab_seas"), ("⚙ Settings", "tab_set")]
+            ("⚙ Settings", "tab_set")]
 _visible = st.session_state.app_settings.get("visible_tabs") or [n for n, _ in ALL_TABS]
 _visible = [n for n, _ in ALL_TABS if n in _visible] or [n for n, _ in ALL_TABS]
 if "⚙ Settings" not in _visible:      # can never be hidden — it's the way back
@@ -511,7 +441,7 @@ if "⚙ Settings" not in _visible:      # can never be hidden — it's the way b
 _created = st.tabs(_visible)
 _lookup = dict(zip(_visible, _created))
 tab_dash, tab1, tab_trade, tab_sc, tab_research, tab_paper, tab_report, \
-    tab_macro, tab_bt, tab_learn, tab2, tab_map, tab_seas, tab_set = (
+    tab_macro, tab_bt, tab_learn, tab2, tab_map, tab_set = (
         _lookup.get(n) for n, _ in ALL_TABS)
 
 if tab_dash is not None:
@@ -527,7 +457,7 @@ if tab_dash is not None:
         items = []
         newest = 0
         for s in syms:
-            snap = load_snap(s)
+            snap = SS.load_snapshot(s)
             if not snap:
                 items.append({"symbol": s, "price": None, "result": None, "trading": None})
                 continue
@@ -571,7 +501,7 @@ if tab1 is not None:
         # build rows from STORED snapshots only — no network here
         rows = []
         for s in syms:
-            snap = load_snap(s)
+            snap = SS.load_snapshot(s)
             if snap and snap.get("result"):
                 rows.append(snap["result"])
 
@@ -682,7 +612,7 @@ if tab_trade is not None:
             prog = st.progress(0.0)
             ok_count, fails = 0, []
             import prediction_tracker as PT
-            _learned_weights = PT.signal_weights(load_ledger_fast())
+            _learned_weights = PT.signal_weights(PT.load_ledger(get_cloud_url()))
             # fetch SPY once for relative-strength comparisons
             spy_closes = None
             try:
@@ -708,7 +638,6 @@ if tab_trade is not None:
             if ok_count:
                 try:
                     cyc = PT.auto_cycle(syms, SS.load_snapshot, get_cloud_url())
-                    _bump('ledger_rev')
                     st.toast(f"Tracker: +{cyc['recorded']} recorded, "
                              f"{cyc['scored']} scored")
                 except Exception:
@@ -721,7 +650,7 @@ if tab_trade is not None:
 
         trows = []
         for s in syms:
-            snap = load_snap(s)
+            snap = SS.load_snapshot(s)
             if snap and (snap.get("trading") or {}).get("ok"):
                 trows.append(snap["trading"])
 
@@ -964,7 +893,7 @@ if tab_research is not None:
                    "snapshots — run ⟳ Update all to populate. Targets are model "
                    "outputs, not promises.")
 
-        snaps = {s: load_snap(s) for s in syms}
+        snaps = {s: SS.load_snapshot(s) for s in syms}
         snaps = {k: v for k, v in snaps.items() if v}
         macro = (SS.load_macro() or {}).get("macro")
         rk = RS.build_rankings(snaps, macro)
@@ -1064,7 +993,7 @@ if tab_sc is not None:
                               help="Off = reproducible paths")
         horizon = 21 if sc_h.startswith("21") else 63
 
-        snap = load_snap(sc_sym)
+        snap = SS.load_snapshot(sc_sym)
         series = (snap or {}).get("result", {}).get("series") or              (snap or {}).get("prices") or []
         if not series:
             st.info("No stored prices for this ticker — hit ⟳ Update all first.")
@@ -1096,7 +1025,7 @@ if tab_sc is not None:
         _url = get_cloud_url()
         try:
             import cloud_sync as CS
-            _conn = _conn_cached(_url)
+            _conn = CS.test_connection(_url)
             if _conn["ok"]:
                 st.success(f"☁ Ledger persistence: connected — survives reboots. "
                            f"({_conn['detail']})")
@@ -1108,7 +1037,7 @@ if tab_sc is not None:
                          f"'saveApp' namespace).")
         except Exception as e:
             st.error(f"☁ Ledger persistence check failed: {e}")
-        ledger = load_ledger_fast()
+        ledger = PT.load_ledger(get_cloud_url())
         preds = ledger.get("predictions", [])
         n_scored = sum(1 for p in preds if p.get("scored"))
         overall = (ledger.get("stats") or {}).get("OVERALL", {})
@@ -1153,7 +1082,7 @@ if tab_paper is not None:
 
         cloud = get_cloud_url()
         try:
-            port, load_status = _paper_cached(cloud or '', st.session_state.get('paper_rev', 0))
+            port, load_status = PP.load_portfolio(cloud)
             load_err = None
         except Exception as e:
             port, load_status, load_err = None, "error", f"{type(e).__name__}: {e}"
@@ -1176,14 +1105,14 @@ if tab_paper is not None:
         # gather current prices from snapshots (+ SPY)
         prices = {}
         for s in list(set(syms + ["SPY"])):
-            snap = load_snap(s)
+            snap = SS.load_snapshot(s)
             px = ((snap or {}).get("trading") or {}).get("price") \
                 or ((snap or {}).get("result") or {}).get("price")
             if px:
                 prices[s] = px
 
         # rankings from the research screener (adjusted upside order)
-        snaps = {s: load_snap(s) for s in syms}
+        snaps = {s: SS.load_snapshot(s) for s in syms}
         snaps = {k: v for k, v in snaps.items() if v}
         macro = (SS.load_macro() or {}).get("macro")
         rk = RS.build_rankings(snaps, macro)
@@ -1201,7 +1130,7 @@ if tab_paper is not None:
             else:
                 res = PP.rebalance(port, ranked, prices, force=True)
                 PP.snapshot_value(port, prices)
-                sv = PP.save_portfolio(port, cloud); _bump('paper_rev')
+                sv = PP.save_portfolio(port, cloud)
                 if sv["cloud"]:
                     st.success(f"Rebalanced & saved. Roster: {len(res.get('roster',[]))}")
                 else:
@@ -1209,7 +1138,7 @@ if tab_paper is not None:
                 st.rerun()
         if cc3.button("↺ Reset portfolio", help="Wipe and start fresh at $100k"):
             port = PP.new_portfolio()
-            PP.save_portfolio(port, cloud); _bump('paper_rev')
+            PP.save_portfolio(port, cloud)
             st.rerun()
 
         # auto-rebalance on tab view if due (only if we safely loaded — never save
@@ -1222,13 +1151,13 @@ if tab_paper is not None:
             _have_today = any(h["date"] == _today for h in port["history"])
             if res.get("acted"):
                 PP.snapshot_value(port, prices)
-                PP.save_portfolio(port, cloud); _bump('paper_rev')
+                PP.save_portfolio(port, cloud)
                 st.info(f"Auto-rebalanced (weekly cadence). Roster: "
                         f"{len(res.get('roster', []))} names.")
             elif not _have_today:
                 # first view today — record the daily mark-to-market once
                 PP.snapshot_value(port, prices)
-                PP.save_portfolio(port, cloud); _bump('paper_rev')
+                PP.save_portfolio(port, cloud)
 
         if not port["positions"]:
             st.info("Portfolio is empty. Click **⟳ Rebalance now** to buy the top 12 "
@@ -1338,7 +1267,7 @@ if tab_report is not None:
             # also include any symbol that has a stored snapshot
             pick = st.selectbox("Ticker (must be analyzed first — use 🔎 Search "
                                 "above for non-watchlist names)", avail)
-            snap = load_snap(pick) if pick else None
+            snap = SS.load_snapshot(pick) if pick else None
             if not snap or not (snap.get("result") or snap.get("trading")):
                 st.info(f"No analysis stored for {pick}. Run ⟳ Update all, or use "
                         "🔎 Search at the top to analyze it on demand.")
@@ -1372,8 +1301,8 @@ if tab_report is not None:
                                      step=5) or None
 
             import prediction_tracker as _PT
-            _lstats = (load_ledger_fast() or {}).get("stats") or {}
-            snaps = {s: load_snap(s) for s in syms}
+            _lstats = (_PT.load_ledger(get_cloud_url()) or {}).get("stats") or {}
+            snaps = {s: SS.load_snapshot(s) for s in syms}
             snaps = {k: v for k, v in snaps.items() if v}
             scan = RE.scan_ideas(snaps, macro, direction=direction,
                                  timeframe=timeframe, min_score=min_sc,
@@ -1614,33 +1543,18 @@ if tab_map is not None:
         m3.caption("🟢 LONG bias · 🔴 SHORT bias · ⚪ WAIT — color is the "
                    "current swing signal, position is valuation × outlook")
 
+        snaps = {s: SS.load_snapshot(s) for s in syms}
+        snaps = {k: v for k, v in snaps.items() if v}
         import inspect as _insp
-        _has_fav = "favorites" in _insp.signature(QM.build_points).parameters
-        if not _has_fav:
+        if "favorites" in _insp.signature(QM.build_points).parameters:
+            qd = QM.build_points(snaps, timeframe=tf, min_composite=min_comp,
+                                 favorites=set(st.session_state.favorites))
+        else:
             st.error("⚠ STALE FILE: the deployed quadrant_map.py is an older "
                      "version without favorites support. Re-upload the latest "
                      "quadrant_map.py, reboot the app, hard-refresh. "
                      "Rendering without favorite glow for now.")
-
-        def _mt(s):
-            try:
-                return _os.path.getmtime(SS._path(s))
-            except OSError:
-                return 0.0
-
-        @st.cache_data(show_spinner=False, max_entries=64)
-        def _qmap_cached(tf_k, min_c, favs_k, syms_k, mtimes_k, has_fav):
-            snaps_l = {s: load_snap(s) for s in syms_k}
-            snaps_l = {k: v for k, v in snaps_l.items() if v}
-            if has_fav:
-                return QM.build_points(snaps_l, timeframe=tf_k,
-                                       min_composite=min_c,
-                                       favorites=set(favs_k))
-            return QM.build_points(snaps_l, timeframe=tf_k, min_composite=min_c)
-
-        qd = _qmap_cached(tf, min_comp,
-                          tuple(sorted(st.session_state.favorites)),
-                          tuple(syms), tuple(_mt(s) for s in syms), _has_fav)
+            qd = QM.build_points(snaps, timeframe=tf, min_composite=min_comp)
         st.components.v1.html(
             '<meta charset="utf-8">' + QM.render_quadrant_html(qd), height=500)
 
@@ -1668,44 +1582,6 @@ if tab_map is not None:
                        f"history): {', '.join(qd['excluded'])} — listed rather "
                        f"than faked.")
 
-
-if tab_seas is not None:
-    with tab_seas:
-        try:
-            import seasonality as SEA
-        except ImportError:
-            SEA = None
-            st.error("seasonality.py is missing from the repo — upload it to "
-                     "enable this tab. The rest of the app is unaffected.")
-        if SEA is not None:
-            st.caption("Monthly-return seasonality, five complete years + "
-                       "current (month-to-date), with the 5-year average per "
-                       "month. **Honest framing:** this is price seasonality "
-                       "of the index ETFs (n=5 per cell — a weak, noisy "
-                       "tendency), context for timing and sizing, never a "
-                       "signal on its own.")
-
-            @st.cache_data(ttl=21600, show_spinner="Loading index history…")
-            def _seas_cached(sym: str, day_key: str):
-                rows = SEA.fetch_daily(client, sym, years=7)
-                return SEA.monthly_grid(rows, n_prior_years=5)
-
-            _dk = dt.date.today().isoformat()
-            for _sym, _label in (
-                    ("SPY", "S&P 500 (SPY) — Monthly Return Seasonality"),
-                    ("QQQ", "Nasdaq-100 (QQQ) — Monthly Return Seasonality")):
-                try:
-                    _g = _seas_cached(_sym, _dk)
-                    st.components.v1.html(
-                        "<meta charset='utf-8'>"
-                        + SEA.render_heatmap_html(_label, _g), height=360)
-                except Exception as _e:
-                    st.warning(f"{_sym}: couldn't load seasonality — {_e}")
-            st.caption("Reading the current month: check the boxed column's "
-                       "5-yr average and the spread of the five cells beneath "
-                       "it — a consistent sign across years means more than "
-                       "the average; five mixed signs means the average is "
-                       "noise.")
 
 if tab_set is not None:
     with tab_set:
