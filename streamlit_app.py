@@ -119,23 +119,45 @@ if "starred" not in st.session_state:
     st.session_state.starred = []
 if "favorites" not in st.session_state:
     st.session_state.favorites = []   # simple symbol list — for spot-ability
-# one-time auto-pull from cloud so progress follows you across computers
+# one-time auto-pull from cloud so progress follows you across computers.
+# ONE bulk call (Code.gs __all__ route) instead of several sequential ones —
+# with a visible status line so a slow cloud is diagnosable, never a mystery.
 if "cloud_pulled" not in st.session_state:
     st.session_state.cloud_pulled = True
     _url = get_cloud_url()
     if _url:
+        _boot = st.empty()
+        _boot.info("☁ Loading your data from the cloud… (if this line sits "
+                   "here >30s, Google Apps Script is having a slow day — the "
+                   "app will proceed with defaults and you can ⬇ Load cloud "
+                   "from the sidebar later)")
+        import time as _t
+        _t0 = _t.time()
         try:
             import cloud_sync as CS
-            blob = CS.load_app_state(_url)
-            if blob:
-                if blob.get("watchlist"):
-                    st.session_state.watchlist = blob["watchlist"]
-                if blob.get("starred"):
-                    st.session_state.starred = blob["starred"]
-                if blob.get("favorites") is not None:
-                    st.session_state.favorites = blob["favorites"]
-        except Exception:
-            pass  # silent on startup; manual sync surfaces errors
+            _all = CS.load_all(_url)          # one call, every blob
+            if _all is not None:
+                blob = _all.get("rugpull") or {}
+                _settings = _all.get("settings") or {}
+            else:
+                # old Code.gs without __all__ — fall back to per-key loads
+                blob = CS.load_app_state(_url) or {}
+                _settings = CS.load_blob(_url, "settings") or {}
+            if blob.get("watchlist"):
+                st.session_state.watchlist = blob["watchlist"]
+            if blob.get("starred"):
+                st.session_state.starred = blob["starred"]
+            if blob.get("favorites") is not None:
+                st.session_state.favorites = blob["favorites"]
+            st.session_state.app_settings = {"visible_tabs": None, "inactive": []}
+            st.session_state.app_settings.update(
+                {k: _settings.get(k) for k in ("visible_tabs", "inactive")
+                 if _settings.get(k) is not None})
+            _boot.empty()
+        except Exception as _e:
+            _boot.warning(f"☁ Cloud load failed after {_t.time()-_t0:.0f}s "
+                          f"({_e}) — running with defaults; use ⬇ Load cloud "
+                          f"in the sidebar to retry.")
 
 st.title("Rugpull_AI")
 st.markdown('<div class="muted">Transparent scoring + σ-based probability zones. '
@@ -151,16 +173,9 @@ client = get_client(key)
 
 # ---- app settings (visible tabs + inactive tickers), persisted to the Sheet --
 if "app_settings" not in st.session_state:
+    # normally populated by the bulk boot load above; this is only the
+    # no-cloud fallback (no network here — boot already tried)
     st.session_state.app_settings = {"visible_tabs": None, "inactive": []}
-    try:
-        import cloud_sync as _CS
-        _blob = _CS.load_blob(get_cloud_url(), "settings")
-        if _blob:
-            st.session_state.app_settings.update(
-                {k: _blob.get(k) for k in ("visible_tabs", "inactive")
-                 if _blob.get(k) is not None})
-    except Exception:
-        pass
 
 def save_settings():
     try:
