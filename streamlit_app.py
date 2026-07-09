@@ -135,7 +135,10 @@ if "cloud_pulled" not in st.session_state:
         _t0 = _t.time()
         try:
             import cloud_sync as CS
-            _all = CS.load_all(_url)          # one call, every blob
+            # getattr: if an older cloud_sync.py is deployed (split upload),
+            # fall through to the classic per-key loads instead of failing
+            _load_all = getattr(CS, "load_all", None)
+            _all = _load_all(_url) if _load_all else None
             if _all is not None:
                 blob = _all.get("rugpull") or {}
                 _settings = _all.get("settings") or {}
