@@ -1645,14 +1645,25 @@ if tab_cvd is not None:
                                         "volume signed by up/down close "
                                         "(cruder, common on charting sites).")
 
-            if st.button(f"⟳ Analyze {_csym} flow", type="primary",
+            if st.button("⟳ Analyze flow", type="primary",
                          key="cvd_go"):
                 with st.spinner(f"Fetching {_csym} intraday bars…"):
                     try:
                         _out = CVA.fetch_cvd(client, _csym, interval=_civ,
                                              days_back=_cdays, method=_cmeth)
                         if _out.get("ok"):
-                            SS.save_cvd(_csym, _out)
+                            _sc = getattr(SS, "save_cvd", None)
+                            if _sc:
+                                _sc(_csym, _out)
+                            else:
+                                # legacy snapshot_store deployed - write the
+                                # cvd slice directly, preserving the rest
+                                import json as _json
+                                _snapf = SS.load_snapshot(_csym) or {
+                                    "symbol": _csym.upper()}
+                                _snapf["cvd"] = _out
+                                with open(SS._path(_csym), "w") as _fh:
+                                    _json.dump(_snapf, _fh)
                             st.rerun()
                         else:
                             st.error(f"{_csym}: {_out.get('note', 'failed')} "
@@ -1664,7 +1675,7 @@ if tab_cvd is not None:
             _cvd = _snap_c.get("cvd")
             if not _cvd or not _cvd.get("ok"):
                 st.info(f"No stored flow analysis for {_csym} yet — hit "
-                        f"**⟳ Analyze {_csym} flow** above. It persists to "
+                        f"**⟳ Analyze flow** above. It persists to "
                         f"the snapshot, so it's here until you refresh it.")
             else:
                 _age_s = ""
