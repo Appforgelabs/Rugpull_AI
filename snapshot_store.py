@@ -40,8 +40,8 @@ def load_snapshot(sym: str) -> dict | None:
 
 
 def save_snapshot(sym: str, result: dict, price_series: list | None = None,
-                  trading: dict | None = None) -> dict:
-    """Freeze a computed analysis + (optional) price series + trading row."""
+                  trading: dict | None = None, cvd: dict | None = None) -> dict:
+    """Freeze a computed analysis + (optional) price series + trading row + cvd."""
     existing = load_snapshot(sym) or {}
     payload = {
         "symbol": sym.upper(),
@@ -49,6 +49,7 @@ def save_snapshot(sym: str, result: dict, price_series: list | None = None,
         "result": result if result is not None else existing.get("result"),
         "prices": price_series if price_series is not None else existing.get("prices", []),
         "trading": trading if trading is not None else existing.get("trading"),
+        "cvd": cvd if cvd is not None else existing.get("cvd"),
     }
     _path(sym).write_text(json.dumps(payload))
     return payload
@@ -57,6 +58,12 @@ def save_snapshot(sym: str, result: dict, price_series: list | None = None,
 def save_trading(sym: str, trading: dict) -> dict:
     """Update just the trading slice of a snapshot, preserving analyzer data."""
     return save_snapshot(sym, result=None, price_series=None, trading=trading)
+
+
+def save_cvd(sym: str, cvd: dict) -> dict:
+    """Update just the CVD slice of a snapshot, preserving everything else."""
+    return save_snapshot(sym, result=None, price_series=None, trading=None,
+                         cvd=cvd)
 
 
 MACRO_PATH = SNAP_DIR / "_macro.json"

@@ -433,7 +433,8 @@ ALL_TABS = [("⬢ Dashboard", "tab_dash"), ("Analyzer", "tab1"),
             ("Report", "tab_report"), ("Macro", "tab_macro"),
             ("Backtest", "tab_bt"), ("Learn", "tab_learn"),
             ("Corridor Chart", "tab2"), ("Map", "tab_map"),
-            ("Seasonality", "tab_seas"), ("⚙ Settings", "tab_set")]
+            ("CVD", "tab_cvd"), ("Seasonality", "tab_seas"),
+            ("⚙ Settings", "tab_set")]
 _visible = st.session_state.app_settings.get("visible_tabs") or [n for n, _ in ALL_TABS]
 _visible = [n for n, _ in ALL_TABS if n in _visible] or [n for n, _ in ALL_TABS]
 if "⚙ Settings" not in _visible:      # can never be hidden — it's the way back
@@ -441,7 +442,7 @@ if "⚙ Settings" not in _visible:      # can never be hidden — it's the way b
 _created = st.tabs(_visible)
 _lookup = dict(zip(_visible, _created))
 tab_dash, tab1, tab_trade, tab_sc, tab_research, tab_paper, tab_report, \
-    tab_macro, tab_bt, tab_learn, tab2, tab_map, tab_seas, tab_set = (
+    tab_macro, tab_bt, tab_learn, tab2, tab_map, tab_cvd, tab_seas, tab_set = (
         _lookup.get(n) for n, _ in ALL_TABS)
 
 if tab_dash is not None:
@@ -1604,6 +1605,111 @@ if tab_map is not None:
                        f"history): {', '.join(qd['excluded'])} — listed rather "
                        f"than faked.")
 
+
+if tab_cvd is not None:
+    with tab_cvd:
+        try:
+            import cvd_analysis as CVA
+            import cvd_chart as CVC
+        except ImportError as _ie:
+            CVA = None
+            st.error(f"CVD module missing from the repo ({_ie}) — upload "
+                     "cvd_analysis.py and cvd_chart.py. The rest of the app "
+                     "is unaffected.")
+        if CVA is not None:
+            st.caption("Cumulative Volume Delta — who has been in control, "
+                       "bar by bar. **Selection-only:** analyze one ticker at "
+                       "a time, on demand (intraday fetches are heavy). "
+                       "Approximate CVD from OHLCV bar location, not true "
+                       "bid/ask tape — treat levels as context, divergences "
+                       "as questions, never as signals.")
+
+            _c1, _c2, _c3, _c4 = st.columns([2.4, 1.6, 1.4, 1.6])
+            _cvd_univ = sorted(set(syms_all)
+                               | {s for s in [st.session_state.get("last_lookup")]
+                                  if s})
+            _csym = _c1.selectbox(
+                "Ticker", _cvd_univ,
+                format_func=lambda s: f"{fav_mark(s)}{s}", key="cvd_sym")
+            _civ = _c2.selectbox("Bar size", ["5min", "15min", "30min",
+                                              "1hour", "1min"], key="cvd_iv",
+                                 help="1min needs the top FMP plan; the fetch "
+                                      "auto-falls back to coarser bars if a "
+                                      "size is gated.")
+            _cdays = _c3.slider("Days", 2, 10, 5, key="cvd_days")
+            _cmeth = _c4.selectbox("Delta method", ["location", "direction"],
+                                   key="cvd_meth",
+                                   help="location: close's position in the "
+                                        "bar range scales the volume "
+                                        "(richer). direction: whole bar "
+                                        "volume signed by up/down close "
+                                        "(cruder, common on charting sites).")
+
+            if st.button(f"⟳ Analyze {_csym} flow", type="primary",
+                         key="cvd_go"):
+                with st.spinner(f"Fetching {_csym} intraday bars…"):
+                    try:
+                        _out = CVA.fetch_cvd(client, _csym, interval=_civ,
+                                             days_back=_cdays, method=_cmeth)
+                        if _out.get("ok"):
+                            SS.save_cvd(_csym, _out)
+                            st.rerun()
+                        else:
+                            st.error(f"{_csym}: {_out.get('note', 'failed')} "
+                                     f"(tried {', '.join(_out.get('tried', []))})")
+                    except Exception as _e:
+                        st.error(f"Fetch failed: {_e}")
+
+            _snap_c = SS.load_snapshot(_csym) or {}
+            _cvd = _snap_c.get("cvd")
+            if not _cvd or not _cvd.get("ok"):
+                st.info(f"No stored flow analysis for {_csym} yet — hit "
+                        f"**⟳ Analyze {_csym} flow** above. It persists to "
+                        f"the snapshot, so it's here until you refresh it.")
+            else:
+                _age_s = ""
+                try:
+                    _age_h = (dt.datetime.now(dt.timezone.utc).timestamp()
+                              - _cvd.get("fetched_at", 0)) / 3600
+                    _age_s = (f" · analyzed {_age_h:.1f}h ago"
+                              if _age_h < 48 else
+                              f" · analyzed {_age_h/24:.0f}d ago — stale, "
+                              f"consider refreshing")
+                except Exception:
+                    pass
+                st.markdown(f"**{fav_mark(_csym)}{_csym}** — "
+                            f"{_cvd['bars']} × {_cvd.get('interval_used')} bars"
+                            + (f" (fell back from {_cvd.get('interval_requested')})"
+                               if _cvd.get("fallback") else "")
+                            + f" · {_cvd.get('method')} delta{_age_s}")
+
+                st.components.v1.html(
+                    "<meta charset='utf-8'>" + CVC.render_cvd_html(_cvd),
+                    height=560)
+
+                for _rd in _cvd.get("synthesis", []):
+                    st.markdown(f"- {_rd}")
+
+                _dv = _cvd.get("divergence") or {}
+                if _dv.get("kind") not in (None, "none"):
+                    (st.warning if _dv["kind"] == "bearish" else st.success)(
+                        f"{'▼' if _dv['kind'] == 'bearish' else '▲'} "
+                        f"{_dv['kind'].title()} divergence: {_dv['note']}")
+
+                _ss = _cvd.get("sessions") or []
+                if _ss:
+                    st.markdown("**Session ledger** — did price agree with "
+                                "the flow each day?")
+                    st.dataframe(
+                        [{"Session": s["date"], "Bars": s["bars"],
+                          "Net delta": f"{s['net_delta']:+,}",
+                          "Session CVD close": f"{s['cvd_close']:+,}",
+                          "Price": (f"{s['price_chg_pct']:+.2f}%"
+                                    if s.get("price_chg_pct") is not None else "—"),
+                          "Flow vs price": "✓ agree" if s["agree"] else "✗ DIVERGED"}
+                         for s in _ss],
+                        use_container_width=True, hide_index=True)
+                st.caption(_cvd.get("note", ""))
 
 if tab_seas is not None:
     with tab_seas:
